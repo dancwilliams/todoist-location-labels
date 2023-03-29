@@ -100,3 +100,7 @@ ENV/
 
 # mypy
 .mypy_cache/
+
+# todoist
+todoist-python/todoist/__pycache__/
+todoist-python/todoist/managers/__pycache__/
