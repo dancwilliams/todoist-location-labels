@@ -5,7 +5,7 @@ import urllib.parse
 import base64
 import itertools
 
-import todoist_api_python as todoist
+import todoist
 import requests
 from flask import Flask
 from flask import request
@@ -252,5 +252,4 @@ if __name__ == '__main__':
     if len(sys.argv) >= 2 and sys.argv[1] == 'initdb':
         db.create_all()
     else:
-        app.run(host="0.0.0.0")
-        #app.run(debug=True, use_reloader=True)
+        app.run(debug=True, use_reloader=True)
