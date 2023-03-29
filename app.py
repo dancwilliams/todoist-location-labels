@@ -5,7 +5,6 @@ import urllib.parse
 import base64
 import itertools
 
-import todoist
 import requests
 from flask import Flask
 from flask import request
@@ -76,14 +75,18 @@ def index():
     }
     if user_id is not None:
         user = User.query.get(user_id)
+        headers = {'Authorization': 'Bearer ' + user.oauth_token}
         labels = requests.get(
-            'https://api.todoist.com/rest/v1/labels',
-            params=dict(token=user.oauth_token)
+            'https://api.todoist.com/rest/v2/labels',
+            headers=headers
         ).json()
         kwargs['labels'] = labels
-        api = todoist.TodoistAPI(user.oauth_token)
-        api.sync()
-        kwargs['user_full_name'] = api.user.get('full_name')
+        user_data = requests.get(
+            'https://api.todoist.com/sync/v9/sync',
+            headers=headers,
+            params={'sync_token': '*', 'resource_types': '["user"]'}
+        ).json()
+        kwargs['user_full_name'] = user_data['user']['full_name']
         # map from label id to location labels
         location_labels = {}
         for label_id, group in itertools.groupby(
@@ -124,10 +127,12 @@ def oauth_redirect():
     ))
     resp.raise_for_status()
     access_token = resp.json()['access_token']
-    api = todoist.TodoistAPI(access_token)
-    api.sync()
-    user_id = api.user.get_id()
-    user = User.query.get(user_id)
+    user_data = requests.get(
+            'https://api.todoist.com/sync/v9/sync',
+            headers=headers,
+            params={'sync_token': '*', 'resource_types': '["user"]'}
+        ).json()
+    user = user_data['user']['id']
     if user is None:
         user = User(id=user_id, oauth_token=access_token)
         db.session.add(user)
@@ -196,17 +201,26 @@ def webhook():
         event_data
     )
     user = User.query.get(initiator['id'])
-    api = todoist.TodoistAPI(user.oauth_token)
-    api.sync()
-    item_reminders = list(filter(lambda x: x['type'] == 'location' and x['item_id']==event_data['id'] , api.reminders.all()))
+    headers = {'Authorization': 'Bearer ' + user.oauth_token}
+    reminders_data = requests.get(
+            'https://api.todoist.com/sync/v9/sync',
+            headers=headers,
+            params={'sync_token': '*', 'resource_types': '["reminders"]'}
+        ).json()
+    item_reminders = list(filter(lambda x: x['type'] == 'location' and x['item_id']==event_data['id'] , reminders_data['reminders']))
     not_used_location_labels = user.location_labels.filter(~LocationLabel.label_id.in_(event_data['labels'])).all()
     to_be_deleted_reminders = list(filter(lambda x: x['name'] in map(lambda y: y.name, not_used_location_labels) and x['loc_trigger'] in map(lambda y: y.loc_trigger, not_used_location_labels) and x['radius'] in map(lambda y: y.radius, not_used_location_labels), item_reminders))
     for reminder in to_be_deleted_reminders:
+        uuid = base64.b64encode(os.urandom(32)).decode('utf8')
         app.logger.info(
             'Reminder found that should be deleted: %s, deleting',
             reminder['id']
         )
-        api.reminders.delete(reminder['id']);
+        requests.get(
+            'https://api.todoist.com/sync/v9/sync',
+            headers=headers,
+            params={"commands": '[ {"type": "reminder_delete", "uuid": uuid, "args": {"id": reminder["id"]} }]'}
+        )
     for label_id in event_data['labels']:
         loc_labels = user.location_labels.filter_by(label_id=label_id).all()
         if not loc_labels:
@@ -216,12 +230,13 @@ def webhook():
             )
             continue
         for loc_label in loc_labels:
+            uuid = base64.b64encode(os.urandom(32)).decode('utf8')
             app.logger.info(
                 'Adding location reminder for item %s from location label %s',
                 event_data['id'],
                 loc_label.id,
             )
-            api_reminders = filter(lambda x: x['item_id'] == event_data['id'] and x['type'] == 'location', api.state['reminders'])
+            api_reminders = filter(lambda x: x['item_id'] == event_data['id'] and x['type'] == 'location', reminders_data['reminders'])
             existing_reminder = list(filter (lambda x: x['name'] == loc_label.name and x['loc_trigger'] == loc_label.loc_trigger and x['radius'] == loc_label.radius, api_reminders))
             if existing_reminder:
                 app.logger.info(
@@ -231,21 +246,20 @@ def webhook():
                 )
                 continue
 
-            api.reminders.add(
-                event_data['id'],
-                type='location',
-                name=loc_label.name,
-                loc_lat=str(loc_label.lat),
-                loc_long=str(loc_label.long),
-                loc_trigger=loc_label.loc_trigger,
-                radius=loc_label.radius
+            request.get(
+                'https://api.todoist.com/sync/v9/sync',
+                headers=headers,
+                params={
+                    "commands": 
+                        '[{ "type": "reminder_add", "temp_id": , "uuid": uuid, "args": { "item_id": event_data["id"], "type": "location", "name": loc_label.name, "loc_lat": str(loc_label.lat), "loc_long": str(loc_label.long), "loc_trigger": loc_label.loc_trigger, "radius": loc_label.radius}]'
+                }
             )
+
             app.logger.info(
                 'Location reminder added for item %s from location label %s',
                 event_data['id'],
                 loc_label.id,
             )
-    api.commit()
     return 'ok'
 
 if __name__ == '__main__':
