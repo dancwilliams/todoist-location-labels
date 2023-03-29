@@ -1,0 +1,3 @@
+[pytest]
+token = test-api-token
+token2 = another-test-api-token
