@@ -30,10 +30,10 @@ app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get(
     'DATABASE_URL',
     'sqlite:///test.db'
 )
-app.secret_key = os.environ['APP_SECRET_KEY']
+app.secret_key = os.environ['TODOIST_FLASK_SECRET_KEY']
 db = SQLAlchemy(app)
-client_id = os.environ['CLIENT_ID']
-client_secret = os.environ['CLIENT_SECRET']
+client_id = os.environ['TODOIST_CLIENT_ID']
+client_secret = os.environ['TODOIST_CLIENT_SECRET']
 google_map_api_key = os.environ['GOOGLE_MAP_API_KEY']
 google_analytics_id = os.environ.get('GOOGLE_ANALYTICS_ID')
 
@@ -68,6 +68,8 @@ def get_current_user():
         abort(401)
     return user
 
+with app.app_context():
+    db.create_all()
 
 @app.route('/')
 def index():
@@ -89,11 +91,8 @@ def index():
         kwargs['user_full_name'] = api.user.get('full_name')
         # map from label id to location labels
         location_labels = {}
-        for label_id, group in itertools.groupby(
-            user.location_labels.all(),
-            lambda ll: ll.label_id
-        ):
-            location_labels[label_id] = list(group)
+        for item in user.location_labels.all():
+            location_labels[str(item.label_id)] = item
         kwargs['location_labels'] = location_labels
     return render_template('index.html', **kwargs)
 
@@ -187,7 +186,7 @@ def create_label_location():
 @app.route('/webhook', methods=['POST'])
 def webhook():
     event = request.json
-    # app.logger.info('Full event: %s', event)
+    app.logger.info('Full event: %s', event)
     if event['event_name'] not in ['item:added', 'item:updated']:
         return ''
     initiator = event['initiator']

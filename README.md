@@ -1,13 +1,11 @@
-# THIS HAS BEEN ARCHIVED
-
 # todoist-location-labels
 Todoist service for adding location reminder for specific label
 
 
 ## First setup
-The database tables need to be created so run a python shell:
+The database tables need to be created so run a flask shell:
 	
-	python
+	flask --app main shell
 
 and run the following commands:
 	

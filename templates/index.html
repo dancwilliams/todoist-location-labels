@@ -151,19 +151,19 @@
                     <li>
                         {{ label['name'] }}
                         <ul>
-                            {% for location_label in location_labels.get(label['id'], []) %}
+                            {% if location_labels.get(label['id']) %}
                                 <li style="height: 3em;">
                                     <a
-                                        href="{{ url_for('delete_label_location', label_location_id=location_label.id) }}"
+                                        href="{{ url_for('delete_label_location', label_location_id= location_labels[label['id']].label_id) }}"
                                         onclick="return confirm('Are you sure?')"
                                         class="btn btn-outline-danger btn-sm"
                                         title="delete"
                                     >
                                       <i class="fa fa-trash"></i>
                                     </a>
-                                    {{ 'Arriving' if location_label.loc_trigger == 'on_enter' else 'Leaving' }} ({{ location_label.radius }} M) {{ location_label.name }}
+                                    {{ 'Arriving' if location_labels[label['id']].loc_trigger == 'on_enter' else 'Leaving' }} ({{ location_labels[label['id']].radius }} M) {{ location_labels[label['id']].name }}
                                 </li>
-                            {% endfor %}
+                            {% endif %}
                         </ul>
                     </li>
                 {% endfor %}
@@ -202,7 +202,7 @@
                                     id="radius"
                                     name="radius"
                                     type="text"
-                                    placeholder="Default 100 Max 255"
+                                    value="100"
                                     required
                                 />
                             </div>
