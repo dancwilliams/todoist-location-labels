@@ -3,8 +3,6 @@ import os
 import logging
 import urllib.parse
 import base64
-import itertools
-
 
 sys.path.append('todoist-python')
 import todoist
@@ -149,7 +147,7 @@ def logout():
 @app.route('/delete_label_location/<int:label_location_id>')
 def delete_label_location(label_location_id):
     user = get_current_user()
-    label_location = LocationLabel.query.get(label_location_id)
+    label_location = LocationLabel.query.filter_by(label_id=label_location_id).all()[0]
     if label_location is None:
         return abort(404)
     if label_location.user.id != user.id:
@@ -158,7 +156,6 @@ def delete_label_location(label_location_id):
     db.session.delete(label_location)
     db.session.commit()
     return redirect(url_for('index'))
-
 
 @app.route('/create_label_location', methods=['POST'])
 def create_label_location():
