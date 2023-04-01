@@ -104,3 +104,5 @@ ENV/
 # todoist
 todoist-python/todoist/__pycache__/
 todoist-python/todoist/managers/__pycache__/
+
+.vscode/

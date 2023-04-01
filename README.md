@@ -5,7 +5,7 @@ Todoist service for adding location reminder for specific label
 ## First setup
 The database tables need to be created so run a flask shell:
 	
-	flask --app main shell
+	flask --app app shell
 
 and run the following commands:
 	
