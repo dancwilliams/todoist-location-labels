@@ -209,7 +209,8 @@ def webhook():
             reminder['id']
         )
         api.reminders.delete(reminder['id']);
-    for label_id in event_data['labels']:
+    for label_name in event_data['labels']:
+        label_id = list(filter(lambda x: x['name'] == label_name, api.labels.all()))[0]['id']
         loc_labels = user.location_labels.filter_by(label_id=label_id).all()
         if not loc_labels:
             app.logger.info(
