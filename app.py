@@ -179,7 +179,6 @@ def create_label_location():
     db.session.commit()
     return redirect(url_for('index'))
 
-
 @app.route('/webhook', methods=['POST'])
 def webhook():
     event = request.json
@@ -206,8 +205,7 @@ def webhook():
             reminder['id']
         )
         api.reminders.delete(reminder['id']);
-    for label_name in event_data['labels']:
-        label_id = list(filter(lambda x: x['name'] == label_name, api.labels.all()))[0]['id']
+    for label_id in event_data['labels']:
         loc_labels = user.location_labels.filter_by(label_id=label_id).all()
         if not loc_labels:
             app.logger.info(
