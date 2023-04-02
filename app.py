@@ -66,8 +66,8 @@ def get_current_user():
         abort(401)
     return user
 
-with app.app_context():
-    db.create_all()
+#with app.app_context():
+#    db.create_all()
 
 @app.route('/')
 def index():
