@@ -193,7 +193,7 @@ def webhook():
         event_data['id'],
         event_data
     )
-    user = User.query.get(initiator['id'])
+    user = User.query.get(int(initiator['id']))
     api = todoist.TodoistAPI(user.oauth_token)
     api.sync()
     item_reminders = list(filter(lambda x: x['type'] == 'location' and x['item_id']==event_data['id'] , api.reminders.all()))
