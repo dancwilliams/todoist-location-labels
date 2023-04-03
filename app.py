@@ -182,7 +182,7 @@ def create_label_location():
 @app.route('/webhook', methods=['POST'])
 def webhook():
     event = request.json
-    app.logger.info('Full event: %s', event)
+    # app.logger.info('Full event: %s', event)
     if event['event_name'] not in ['item:added', 'item:updated']:
         return ''
     initiator = event['initiator']
@@ -197,7 +197,16 @@ def webhook():
     api = todoist.TodoistAPI(user.oauth_token)
     api.sync()
     item_reminders = list(filter(lambda x: x['type'] == 'location' and x['item_id']==event_data['id'] , api.reminders.all()))
-    not_used_location_labels = user.location_labels.filter(~LocationLabel.label_id.in_(event_data['labels'])).all()
+    event_data_label_ids = []
+    for x in api.labels.all():
+        for l in event_data['labels']:
+            if x['name'] == l:
+                event_data_label_ids.append(int(x['id']))
+    user_location_labels = LocationLabel.query.filter_by(user_id=initiator['id']).all()
+    not_used_location_labels = []
+    for x in user_location_labels:
+        if x.label_id not in event_data_label_ids:
+            not_used_location_labels.append(x)
     to_be_deleted_reminders = list(filter(lambda x: x['name'] in map(lambda y: y.name, not_used_location_labels) and x['loc_trigger'] in map(lambda y: y.loc_trigger, not_used_location_labels) and x['radius'] in map(lambda y: y.radius, not_used_location_labels), item_reminders))
     for reminder in to_be_deleted_reminders:
         app.logger.info(
@@ -205,7 +214,7 @@ def webhook():
             reminder['id']
         )
         api.reminders.delete(reminder['id']);
-    for label_id in event_data['labels']:
+    for label_id in event_data_label_ids:
         loc_labels = user.location_labels.filter_by(label_id=label_id).all()
         if not loc_labels:
             app.logger.info(
