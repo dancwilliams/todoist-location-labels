@@ -3,4 +3,4 @@ gunicorn
 requests
 Flask
 Flask-SQLAlchemy
-blck
+black
