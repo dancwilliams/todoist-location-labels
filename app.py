@@ -30,6 +30,8 @@ app.config['SESSION_TYPE'] = 'filesystem'
 app.config['SESSION_PERMANENT'] = True
 app.config['PERMANENT_SESSION_LIFETIME'] = 86400  # e.g., one day
 
+# pool_pre_ping should help handle DB connection drops
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {"pool_pre_ping": True} 
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get(
     "DATABASE_URL", "sqlite:///test.db"
