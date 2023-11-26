@@ -92,6 +92,7 @@ def index():
     }
     if user_id is not None:
         user = User.query.get(user_id)
+        app.logger.info(f"user_id: {user_id} and token: {user.oauth_token}")
         headers = {"Authorization": "Bearer " + user.oauth_token}
         labels = requests.get(
             "https://api.todoist.com/rest/v2/labels", headers=headers
