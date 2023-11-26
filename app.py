@@ -76,7 +76,7 @@ def get_current_user():
     return user
 
 def log_request(route):
-    app.logger.info(f"Request made to {route}: IP {request.remote_addr} at {datetime.now()}")
+    app.logger.info(f"Request made to {route}: IP {request.headers.get('Fly-Client-IP')} at {datetime.now()}")
     
 # with app.app_context():
 #    db.create_all()
