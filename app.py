@@ -34,6 +34,10 @@ app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get(
     "DATABASE_URL", "sqlite:///test.db"
 )
+app.config['SQLALCHEMY_POOL_SIZE'] = 10
+app.config['SQLALCHEMY_POOL_TIMEOUT'] = 30
+app.config['SQLALCHEMY_POOL_RECYCLE'] = 299
+
 app.secret_key = os.environ["TODOIST_FLASK_SECRET_KEY"]
 db = SQLAlchemy(app)
 client_id = os.environ["TODOIST_CLIENT_ID"]
