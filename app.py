@@ -3,6 +3,7 @@ import os
 import logging
 import urllib.parse
 import base64
+from datetime import datetime
 
 sys.path.append("todoist-python")
 import todoist
@@ -20,9 +21,9 @@ from flask_session import Session  # Import Session
 
 app = Flask(__name__)
 
-if "DYNO" in os.environ:
-    # app.logger.addHandler(logging.StreamHandler(sys.stdout))
-    app.logger.setLevel(logging.INFO)
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+app.logger.setLevel(logging.INFO)
 
 # Configure your app for Flask-Session
 app.config['SESSION_TYPE'] = 'filesystem'
@@ -70,13 +71,16 @@ def get_current_user():
         abort(401)
     return user
 
-
+def log_request(route):
+    app.logger.info(f"Request made to {route}: IP {request.remote_addr} at {datetime.now()}")
+    
 # with app.app_context():
 #    db.create_all()
 
 
 @app.route("/")
 def index():
+    log_request('/')
     user_id = session.get("user_id")
     kwargs = {
         "google_map_api_key": google_map_api_key,
@@ -102,6 +106,7 @@ def index():
 
 @app.route("/authorize")
 def authorize():
+    log_request('/authorize')
     state = base64.b64encode(os.urandom(32)).decode("utf8")
     session["oauth_secret_state"] = state
     return redirect(
@@ -118,6 +123,7 @@ def authorize():
 
 @app.route("/oauth/redirect")
 def oauth_redirect():
+    log_request('/oauth/redirect')
     state = session["oauth_secret_state"]
     if request.args.get("state") != state:
         return abort(401)
@@ -161,12 +167,14 @@ def oauth_redirect():
 
 @app.route("/logout")
 def logout():
+    log_request('/logout')
     del session["user_id"]
     return redirect(url_for("index"))
 
 
 @app.route("/delete_label_location/<int:label_location_id>")
 def delete_label_location(label_location_id):
+    log_request(f'/delete_label_location/{label_location_id}')
     user = get_current_user()
     label_location = LocationLabel.query.filter_by(label_id=label_location_id).all()[0]
     if label_location is None:
@@ -181,6 +189,7 @@ def delete_label_location(label_location_id):
 
 @app.route("/create_label_location", methods=["POST"])
 def create_label_location():
+    log_request('/create_label_location')
     user = get_current_user()
     label_id = int(request.form["label_id"])
     trigger = request.form["trigger"]
@@ -204,6 +213,7 @@ def create_label_location():
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
+    log_request('/webhook')
     event = request.json
     # app.logger.info('Full event: %s', event)
     if event["event_name"] not in ["item:added", "item:updated"]:
