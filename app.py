@@ -117,16 +117,26 @@ def oauth_redirect():
     code = request.args.get("code")
     if not code:
         return abort(400)
-    resp = requests.post(
-        "https://todoist.com/oauth/access_token",
-        data=dict(
-            client_id=client_id,
-            client_secret=client_secret,
-            code=code,
-            redirect_uri=url_for("authorize", _external=True),
-        ),
-    )
-    resp.raise_for_status()
+    try:
+        resp = requests.post(
+            "https://todoist.com/oauth/access_token",
+            data=dict(
+                client_id=client_id,
+                client_secret=client_secret,
+                code=code,
+                redirect_uri=url_for("authorize", _external=True),
+            ),
+        )
+        resp.raise_for_status()
+    except requests.exceptions.HTTPError as err:
+        # Log the error details
+        app.logger.error(f"HTTP Error occurred: {err}")
+        app.logger.error(f"Response status: {resp.status_code}")
+        app.logger.error(f"Response headers: {resp.headers}")
+        app.logger.error(f"Response body: {resp.text}")  # or resp.json() if it's JSON
+        
+        # Return an error response or handle it as you see fit
+        return abort(500)
     access_token = resp.json()["access_token"]
     api = todoist.TodoistAPI(access_token)
     api.sync()
