@@ -16,12 +16,18 @@ from flask import session
 from flask import abort
 from flask import url_for
 from flask_sqlalchemy import SQLAlchemy
+from flask_session import Session  # Import Session
 
 app = Flask(__name__)
 
 if "DYNO" in os.environ:
     # app.logger.addHandler(logging.StreamHandler(sys.stdout))
     app.logger.setLevel(logging.INFO)
+
+# Configure your app for Flask-Session
+app.config['SESSION_TYPE'] = 'filesystem'
+app.config['SESSION_PERMANENT'] = True
+app.config['PERMANENT_SESSION_LIFETIME'] = 86400  # e.g., one day
 
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get(
@@ -34,6 +40,7 @@ client_secret = os.environ["TODOIST_CLIENT_SECRET"]
 google_map_api_key = os.environ["GOOGLE_MAP_API_KEY"]
 google_analytics_id = os.environ.get("GOOGLE_ANALYTICS_ID")
 
+Session(app) # Initialize Flask-Session
 
 class User(db.Model):
     id = db.Column(db.BigInteger, primary_key=True)
