@@ -6,3 +6,4 @@ Flask-SQLAlchemy
 black
 Flask-Session
 Flask-Limiter
+tenacity

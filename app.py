@@ -4,6 +4,7 @@ import logging
 import urllib.parse
 import base64
 from datetime import datetime
+from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type, before_log, after_log
 
 sys.path.append("todoist-python")
 import todoist
@@ -68,6 +69,9 @@ class LocationLabel(db.Model):
     radius = db.Column(db.Float, nullable=False)
 
 
+# with app.app_context():
+#    db.create_all()
+
 def get_current_user():
     user_id = session.get("user_id")
     if user_id is None:
@@ -79,10 +83,38 @@ def get_current_user():
 
 def log_request(route):
     app.logger.info(f"Request made to {route}: IP {request.headers.get('Fly-Client-IP')} at {datetime.now()}")
-    
-# with app.app_context():
-#    db.create_all()
 
+def log_retry_attempt(retry_state):
+    app.logger.warning(f"Retrying API Call: Attempt {retry_state.attempt_number}")
+
+def log_retry_error(retry_state):
+    app.logger.error(f"Retry failed: {retry_state.outcome.exception()}")
+
+@retry(
+    retry=retry_if_exception_type(requests.exceptions.HTTPError),
+    stop=stop_after_attempt(3),
+    wait=wait_fixed(2),
+    before=log_retry_attempt,
+    after=log_retry_error
+)
+def resilient_api_call(url, headers):
+    response = requests.get(url, headers=headers, timeout=10)
+    response.raise_for_status()  # Raises HTTPError for 4xx/5xx responses
+    return response.json()
+
+def get_todoist_labels(headers):
+    try:
+        return resilient_api_call("https://api.todoist.com/rest/v2/labels", headers)
+    except requests.exceptions.HTTPError as e:
+        # Handle HTTP errors
+        # Log the error, notify the user, use fallback data, etc.
+        # Example: log and return an empty list or a cached response
+        app.logger.error(f"API request failed: {e}")
+        return []
+    except requests.exceptions.RequestException as e:
+        # Handle non-HTTP errors (like network issues)
+        app.logger.error(f"API request failed: {e}")
+        return []
 
 @app.route("/")
 def index():
@@ -96,9 +128,7 @@ def index():
         user = User.query.get(user_id)
         app.logger.info(f"user_id: {user_id} and token: {user.oauth_token}")
         headers = {"Authorization": "Bearer " + user.oauth_token}
-        labels = requests.get(
-            "https://api.todoist.com/rest/v2/labels", headers=headers
-        ).json()
+        labels = get_todoist_labels(headers)
         kwargs["labels"] = labels
         api = todoist.TodoistAPI(user.oauth_token)
         api.sync()
