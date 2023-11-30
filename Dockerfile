@@ -8,6 +8,8 @@ COPY ./requirements.txt /app/requirements.txt
 WORKDIR /app
 
 # install the dependencies and packages in the requirements file
+RUN apk add --no-cache g++ gcc libxslt-dev musl-dev linux-headers python3-dev
+RUN pip install honeycomb-opentelemetry --pre
 RUN pip install -r requirements.txt
 # RUN python -m pip install honeycomb-opentelemetry --pre
 # RUN opentelemetry-bootstrap --action=install
@@ -18,6 +20,6 @@ COPY . /app
 # configure the container to run in an executed manner
 # ENTRYPOINT [ "python" ]
 
-ENTRYPOINT [ "gunicorn", "-b [::]:5000", "app:app" ]
+ENTRYPOINT [ "opentelemetry-instrument", "gunicorn", "-b [::]:5000", "app:app" ]
 
 # CMD [ "" ]
