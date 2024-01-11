@@ -5,6 +5,7 @@ import urllib.parse
 import base64
 from datetime import datetime
 from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type, before_log, after_log
+from opentelemetry import trace
 
 sys.path.append("todoist-python")
 import todoist
@@ -48,6 +49,8 @@ client_secret = os.environ["TODOIST_CLIENT_SECRET"]
 google_map_api_key = os.environ["GOOGLE_MAP_API_KEY"]
 google_analytics_id = os.environ.get("GOOGLE_ANALYTICS_ID")
 
+tracer = trace.get_tracer("todoist-flask")
+
 Session(app) # Initialize Flask-Session
 
 class User(db.Model):
@@ -72,6 +75,7 @@ class LocationLabel(db.Model):
 # with app.app_context():
 #    db.create_all()
 
+@tracer.start_as_current_span("get_current_user")
 def get_current_user():
     user_id = session.get("user_id")
     if user_id is None:
@@ -102,6 +106,7 @@ def resilient_api_call(url, headers):
     response.raise_for_status()  # Raises HTTPError for 4xx/5xx responses
     return response.json()
 
+@tracer.start_as_current_span("get_todoist_labels")
 def get_todoist_labels(headers):
     try:
         return resilient_api_call("https://api.todoist.com/rest/v2/labels", headers)
@@ -117,6 +122,7 @@ def get_todoist_labels(headers):
         return []
 
 @app.route("/")
+@tracer.start_as_current_span("index")
 def index():
     log_request('/')
     user_id = session.get("user_id")
@@ -142,6 +148,7 @@ def index():
 
 
 @app.route("/authorize")
+@tracer.start_as_current_span("authorize")
 def authorize():
     log_request('/authorize')
     state = base64.b64encode(os.urandom(32)).decode("utf8")
@@ -159,6 +166,7 @@ def authorize():
 
 
 @app.route("/oauth/redirect")
+@tracer.start_as_current_span("oauth_redirect")
 def oauth_redirect():
     log_request('/oauth/redirect')
     state = session["oauth_secret_state"]
@@ -203,6 +211,7 @@ def oauth_redirect():
 
 
 @app.route("/logout")
+@tracer.start_as_current_span("logout")
 def logout():
     log_request('/logout')
     del session["user_id"]
@@ -210,6 +219,7 @@ def logout():
 
 
 @app.route("/delete_label_location/<int:label_location_id>")
+@tracer.start_as_current_span("delete_label_location")
 def delete_label_location(label_location_id):
     log_request(f'/delete_label_location/{label_location_id}')
     user = get_current_user()
@@ -225,6 +235,7 @@ def delete_label_location(label_location_id):
 
 
 @app.route("/create_label_location", methods=["POST"])
+@tracer.start_as_current_span("create_label_location")
 def create_label_location():
     log_request('/create_label_location')
     user = get_current_user()
@@ -249,6 +260,7 @@ def create_label_location():
 
 
 @app.route("/webhook", methods=["POST"])
+@tracer.start_as_current_span("webhook")
 def webhook():
     log_request('/webhook')
     event = request.json
