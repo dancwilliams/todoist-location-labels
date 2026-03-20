@@ -1,1 +1,7 @@
 fly.toml
+.venv
+.git
+todoist-python
+plans
+__pycache__
+*.pyc

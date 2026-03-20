@@ -101,8 +101,11 @@ ENV/
 # mypy
 .mypy_cache/
 
-# todoist
+# todoist (vendored library - no longer used)
 todoist-python/todoist/__pycache__/
 todoist-python/todoist/managers/__pycache__/
+
+# uv
+.python-version
 
 .vscode/
