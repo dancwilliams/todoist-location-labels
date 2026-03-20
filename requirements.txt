@@ -8,7 +8,7 @@ Flask-Session
 Flask-Limiter
 tenacity
 opentelemetry-instrumentation-aws-lambda==0.41b0
-opentelemetry-instrumentation-dbapi==0.41b0
+opentelemetry-instrumentation-dbapi==0.61b0
 opentelemetry-instrumentation-logging==0.41b0
 opentelemetry-instrumentation-sqlite3==0.41b0
 opentelemetry-instrumentation-urllib==0.41b0
