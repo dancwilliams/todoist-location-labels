@@ -65,3 +65,11 @@ def post_webhook(client, monkeypatch):
         return client.post("/webhook", data=body, headers=headers)
 
     return post
+
+
+@pytest.fixture
+def login(client, user):
+    """Log the test client in as the `user` fixture."""
+    with client.session_transaction() as sess:
+        sess["user_id"] = user.id
+    return user

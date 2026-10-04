@@ -316,11 +316,13 @@ One PR. Nothing here changes what a user sees.
 No behaviour change; Phase 1 suite must stay green. Add nothing.
 
 ### Success Criteria
-- [ ] `grep -c opentelemetry uv.lock` prints 0; `grep -c limiter uv.lock` prints 0; `ls .devcontainer` fails
-- [ ] `make check` green; merged; deploy green
-- [ ] After Dan's `fly secrets unset`: `fly secrets list` shows 5 names
-- [ ] `fly logs --no-tail` after ten minutes: no `Request made to /` lines; one machine start shows the health check passing with no prior failure line
-- [ ] End-to-end steps 1 to 5
+- [x] `grep -c opentelemetry uv.lock` prints 0; `grep -c limiter uv.lock` prints 0; `ls .devcontainer` fails
+- [x] `make check` green; merged; deploy green
+- [x] After Dan's `fly secrets unset`: `fly secrets list` shows 5 names
+- [x] `fly logs --no-tail` after ten minutes: no `Request made to /` lines; one machine start shows the health check passing with no prior failure line
+- [x] End-to-end steps 1 to 5
+
+**Phase 3 result (2026-10-04):** PR #35 merged as 83125ce, release v74. Lock 66 to 38 packages. Gunicorn boots in about 1 s without the instrumentation wrapper (was about 4 s). Zero health-check lines in the log after the deploy. Correction to R2: the grace period is 15 s on the machine, yet Fly still prints one `Health check ... has failed` line at each machine start before the first passing check; that line is Fly reporting the initial state, not a boot race, and it stays. The `fly secrets unset` step is Dan's.
 
 ---
 

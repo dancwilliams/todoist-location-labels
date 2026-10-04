@@ -71,7 +71,9 @@ make check                    # what CI runs: ruff format --check, ruff check, m
 - Formatting + linting via `ruff` (config in `pyproject.toml`; rules E/F/I/N/W/UP, line length 100, double quotes); `mypy app.py` non-strict with `warn_return_any`
 - Tests in `tests/` (pytest, coverage printed). `tests/conftest.py` sets dummy env vars before importing `app`, because the module reads its secrets at import time. The webhook reconciliation is the path that must stay covered.
 - The webhook fails closed: if the labels or reminders fetch raises, it answers 503 and Todoist redelivers (15 min, up to 3 times). An empty labels list is never inferred from an API failure.
-- Tenacity retry wrapper on Todoist GETs (3 attempts, 2s wait) — note: sync POSTs are not wrapped
+- All outbound Todoist calls go through one `requests.Session` (`todoist_http`) with urllib3 `Retry`: 429 and 5xx retried three times (1, 2, 4 s), GET and POST alike; a 401 is not retried. POST retry is safe because every sync command carries a `uuid` Todoist dedupes on.
+- `todoist_get_labels` follows `next_cursor` until it is empty; reading only the first page would make later labels look removed.
+- Deleting a mapping is `POST /delete_label_location/<row id>` (the `LocationLabel.id`, not the Todoist label id). GET is refused so a cross-site link cannot delete.
 - No tracing. The OpenTelemetry stack was removed 2026-10-04: it had recorded nothing since the March migration (no configurator was installed, so every span was a no-op) and nobody missed it.
 - `log_request` skips requests without `Fly-Client-IP`, which is how Fly's 15-second health check stays out of the log.
 - Flask-Session with filesystem backend for session persistence

@@ -59,7 +59,7 @@ def test_deletes_reminder_when_label_removed(post_webhook, user, monkeypatch):
 def test_api_failure_does_not_delete(post_webhook, user, monkeypatch):
     """B12: a Todoist API failure must not read as 'task has no labels'."""
 
-    def down(endpoint, token):
+    def down(endpoint, token, params=None):
         raise requests.exceptions.ConnectionError("todoist down")
 
     calls = {"delete": []}
@@ -90,7 +90,9 @@ def test_rejects_wrong_signature(post_webhook, user, monkeypatch):
 def test_unexpected_labels_shape_does_not_delete(post_webhook, user, monkeypatch):
     """A labels response that is not the v1 {"results": [...]} dict must not read as 'no labels'."""
     calls = {"delete": []}
-    monkeypatch.setattr(app_module, "todoist_api_get", lambda endpoint, token: {"error": "x"})
+    monkeypatch.setattr(
+        app_module, "todoist_api_get", lambda endpoint, token, params=None: {"error": "x"}
+    )
     monkeypatch.setattr(app_module, "todoist_get_reminders", lambda token: [HOME_REMINDER])
     monkeypatch.setattr(app_module, "todoist_add_reminder", lambda *a: None)
     monkeypatch.setattr(app_module, "todoist_delete_reminder", lambda *a: calls["delete"].append(a))
