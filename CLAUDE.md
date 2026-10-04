@@ -53,20 +53,24 @@ Webhook `event_data["labels"]` contains label **names** (strings), not IDs. The 
 
 ## Running Locally
 ```bash
-uv sync                # install deps from uv.lock
-# Set environment variables above
+cp .env.example .env   # then fill in the values
+uv sync                # install deps from uv.lock (dev group included)
 uv run python app.py          # Dev server on port 5000
 uv run python app.py initdb   # Create database tables
+make check                    # what CI runs: ruff format --check, ruff check, mypy, pytest
 ```
 
 ## Deployment
 - **Platform**: Fly.io (`fly.toml`)
 - **Container**: Python 3.13 Alpine + `uv sync --frozen --no-dev`
 - **Entrypoint**: `opentelemetry-instrument gunicorn -b 0.0.0.0:5000 app:app`
+- `master` requires the `check` status; no reviewers (solo repo). Merging to master deploys.
 - Instrumented with OpenTelemetry, exporting to Honeycomb
 
 ## Development Notes
-- Formatting + linting via `ruff` (config in `pyproject.toml`; rules E/F/I/W, line length 88, double quotes)
+- Formatting + linting via `ruff` (config in `pyproject.toml`; rules E/F/I/N/W/UP, line length 100, double quotes); `mypy app.py` non-strict with `warn_return_any`
+- Tests in `tests/` (pytest, coverage printed). `tests/conftest.py` sets dummy env vars before importing `app`, because the module reads its secrets at import time. The webhook reconciliation is the path that must stay covered.
+- The webhook fails closed: if the labels or reminders fetch raises, it answers 503 and Todoist redelivers (15 min, up to 3 times). An empty labels list is never inferred from an API failure.
 - Tenacity retry wrapper on Todoist GETs (3 attempts, 2s wait) — note: sync POSTs are not wrapped
 - OpenTelemetry tracing via Honeycomb on all routes (`@tracer.start_as_current_span`)
 - Flask-Session with filesystem backend for session persistence
