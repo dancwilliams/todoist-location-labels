@@ -17,6 +17,7 @@ from flask import (
     session,
     url_for,
 )
+from flask_session import Session  # type: ignore[attr-defined]
 from flask_sqlalchemy import SQLAlchemy
 from opentelemetry import trace
 from tenacity import (
@@ -25,8 +26,6 @@ from tenacity import (
     stop_after_attempt,
     wait_fixed,
 )
-
-from flask_session import Session  # type: ignore[attr-defined]
 
 app = Flask(__name__)
 
