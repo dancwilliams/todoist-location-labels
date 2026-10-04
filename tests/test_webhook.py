@@ -85,3 +85,15 @@ def test_rejects_wrong_signature(post_webhook, user, monkeypatch):
     r = post_webhook(_event([]), signature="bm90IHRoZSBzaWduYXR1cmU=")
     assert r.status_code == 401
     assert calls == {"add": [], "delete": []}
+
+
+def test_unexpected_labels_shape_does_not_delete(post_webhook, user, monkeypatch):
+    """A labels response that is not the v1 {"results": [...]} dict must not read as 'no labels'."""
+    calls = {"delete": []}
+    monkeypatch.setattr(app_module, "todoist_api_get", lambda endpoint, token: {"error": "x"})
+    monkeypatch.setattr(app_module, "todoist_get_reminders", lambda token: [HOME_REMINDER])
+    monkeypatch.setattr(app_module, "todoist_add_reminder", lambda *a: None)
+    monkeypatch.setattr(app_module, "todoist_delete_reminder", lambda *a: calls["delete"].append(a))
+    r = post_webhook(_event(["Home"]))
+    assert r.status_code == 503
+    assert calls["delete"] == []

@@ -6,7 +6,6 @@ import os
 import sys
 import urllib.parse
 import uuid
-from datetime import datetime
 
 import requests
 from flask import (
@@ -21,7 +20,6 @@ from flask import (
 )
 from flask_session import Session  # type: ignore[attr-defined]
 from flask_sqlalchemy import SQLAlchemy
-from opentelemetry import trace
 from tenacity import (
     retry,
     retry_if_exception_type,
@@ -40,13 +38,10 @@ app.config["SESSION_TYPE"] = "filesystem"
 app.config["SESSION_PERMANENT"] = True
 app.config["PERMANENT_SESSION_LIFETIME"] = 86400  # e.g., one day
 
-# pool_pre_ping should help handle DB connection drops
-app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {"pool_pre_ping": True}
+# pre_ping and recycle guard against Fly Postgres dropping idle connections
+app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {"pool_pre_ping": True, "pool_recycle": 299}
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("DATABASE_URL", "sqlite:///test.db")
-app.config["SQLALCHEMY_POOL_SIZE"] = 10
-app.config["SQLALCHEMY_POOL_TIMEOUT"] = 30
-app.config["SQLALCHEMY_POOL_RECYCLE"] = 299
 
 app.secret_key = os.environ["TODOIST_FLASK_SECRET_KEY"]
 db = SQLAlchemy(app)
@@ -55,9 +50,8 @@ client_secret = os.environ["TODOIST_CLIENT_SECRET"]
 google_map_api_key = os.environ["GOOGLE_MAP_API_KEY"]
 google_analytics_id = os.environ.get("GOOGLE_ANALYTICS_ID")
 
-tracer = trace.get_tracer("todoist-flask")
 
-Session(app)  # Initialize Flask-Session
+Session(app)
 
 
 class User(db.Model):  # type: ignore[name-defined]
@@ -77,11 +71,6 @@ class LocationLabel(db.Model):  # type: ignore[name-defined]
     radius = db.Column(db.Float, nullable=False)
 
 
-# with app.app_context():
-#    db.create_all()
-
-
-@tracer.start_as_current_span("get_current_user")
 def get_current_user():
     user_id = session.get("user_id")
     if user_id is None:
@@ -94,7 +83,9 @@ def get_current_user():
 
 def log_request(route):
     ip = request.headers.get("Fly-Client-IP")
-    app.logger.info(f"Request made to {route}: IP {ip} at {datetime.now()}")
+    if ip is None:  # Fly's health check: one line every 15 s would bury everything else
+        return
+    app.logger.info("Request made to %s: IP %s", route, ip)
 
 
 def log_retry_attempt(retry_state):
@@ -145,15 +136,9 @@ def todoist_api_get(endpoint, token):
 
 def todoist_get_labels(token):
     """Fetch all labels for a user. Raises RequestException on API failure."""
-    result = todoist_api_get("labels", token)
-    # API v1 returns paginated dict with 'results' key
-    if isinstance(result, dict) and "results" in result:
-        labels = result["results"]
-    elif isinstance(result, list):
-        labels = result
-    else:
-        app.logger.warning("Unexpected labels response: %s", str(result)[:300])
-        labels = []
+    # API v1 returns a paginated dict: {"results": [...]}. Anything else raises,
+    # so a malformed response is never mistaken for "no labels".
+    labels = todoist_api_get("labels", token)["results"]
     app.logger.info("Fetched %d labels", len(labels))
     return labels
 
@@ -223,7 +208,6 @@ def todoist_delete_reminder(token, reminder_id):
 
 
 @app.route("/")
-@tracer.start_as_current_span("index")
 def index():
     log_request("/")
     user_id = session.get("user_id")
@@ -237,7 +221,7 @@ def index():
         try:
             labels = todoist_get_labels(user.oauth_token)
             user_info = todoist_get_user(user.oauth_token)
-        except requests.exceptions.RequestException as e:
+        except (requests.exceptions.RequestException, KeyError, TypeError) as e:
             app.logger.error("Todoist API unavailable, rendering without labels: %s", e)
             labels, user_info = [], {}
         kwargs["labels"] = labels
@@ -251,7 +235,6 @@ def index():
 
 
 @app.route("/authorize")
-@tracer.start_as_current_span("authorize")
 def authorize():
     log_request("/authorize")
     state = base64.b64encode(os.urandom(32)).decode("utf8")
@@ -269,7 +252,6 @@ def authorize():
 
 
 @app.route("/oauth/redirect")
-@tracer.start_as_current_span("oauth_redirect")
 def oauth_redirect():
     log_request("/oauth/redirect")
     state = session["oauth_secret_state"]
@@ -317,7 +299,6 @@ def oauth_redirect():
 
 
 @app.route("/logout")
-@tracer.start_as_current_span("logout")
 def logout():
     log_request("/logout")
     del session["user_id"]
@@ -325,7 +306,6 @@ def logout():
 
 
 @app.route("/delete_label_location/<int:label_location_id>")
-@tracer.start_as_current_span("delete_label_location")
 def delete_label_location(label_location_id):
     log_request(f"/delete_label_location/{label_location_id}")
     user = get_current_user()
@@ -341,7 +321,6 @@ def delete_label_location(label_location_id):
 
 
 @app.route("/create_label_location", methods=["POST"])
-@tracer.start_as_current_span("create_label_location")
 def create_label_location():
     log_request("/create_label_location")
     user = get_current_user()
@@ -366,7 +345,6 @@ def create_label_location():
 
 
 @app.route("/webhook", methods=["POST"])
-@tracer.start_as_current_span("webhook")
 def webhook():
     log_request("/webhook")
     # Only Todoist knows the client secret, so only Todoist can sign a delivery.
@@ -398,7 +376,7 @@ def webhook():
     try:
         all_labels = todoist_get_labels(token)
         all_reminders = todoist_get_reminders(token)
-    except requests.exceptions.RequestException as e:
+    except (requests.exceptions.RequestException, KeyError, TypeError) as e:
         app.logger.error("Todoist API unavailable, asking for redelivery: %s", e)
         return "todoist api error", 503
 

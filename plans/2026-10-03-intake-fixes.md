@@ -273,9 +273,11 @@ else:
 - Update CLAUDE.md "Todoist Webhooks" bullet: deliveries are verified against `X-Todoist-Hmac-SHA256` with the client secret.
 
 ### Success Criteria (2b)
-- [ ] `make check` green; merged; deploy green
-- [ ] End-to-end steps 3 to 5 still work
-- [ ] `curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{"event_name":"item:added"}' https://todoist-location-labels.fly.dev/webhook` prints 401
+- [x] `make check` green; merged; deploy green
+- [x] End-to-end steps 3 to 5 still work
+- [x] `curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{"event_name":"item:added"}' https://todoist-location-labels.fly.dev/webhook` prints 401
+
+**2b result (2026-10-04):** PR #34 merged as ba0a9d5, release v73. Unsigned and wrongly signed probes both get 401; real deliveries at 22:33:28 and 22:33:39 UTC passed (`reminder_delete` and `reminder_add` both `ok`). B1 closed.
 
 ---
 
@@ -328,6 +330,7 @@ One PR. Each item carries one test that fails first.
 
 - **B4**: route becomes `@app.route("/delete_label_location/<int:location_label_id>", methods=["POST"])`, keyed by the row's primary key `id`; body `ll = db.session.get(LocationLabel, location_label_id); if ll is None or ll.user_id != user.id: abort(404)`. Template `:156-163`: replace the `<a>` with a one-button `<form method="post" action="{{ url_for('delete_label_location', location_label_id=location_labels[label['id']].id) }}" onsubmit="return confirm('Are you sure?')">`. Test: unknown id → 404 (today: 500); another user's row → 404; GET → 405.
 - **B5**: `state = session.get("oauth_secret_state")`; missing or mismatched → 401. `session.pop("user_id", None)` in logout. Tests: cold hit on `/oauth/redirect?state=x&code=y` → 401 (today: 500); `/logout` without session → 302.
+- **B13 (found during Phase 3)**: `GET /api/v1/labels` is paginated and `todoist_get_labels` reads only the first page. A user with more labels than one page holds has later labels reported as "not found", so their reminders are never added and, on the delete path, existing ones are removed. Pass `limit=200` and follow `next_cursor` until it is null. Test: two pages → labels from both are mapped.
 - **B6**: `timeout=10` on the OAuth `requests.post`. No test; a one-token change.
 - **B9**: in `index()`, if `user is None`: `session.pop("user_id", None)` and render anonymous. Test: session with `user_id=999` → 200 and the Authorize button present.
 - **B10**: `app.py:163` log only `result.get("id")`.

@@ -13,4 +13,4 @@ COPY . /app
 
 ENV PATH="/app/.venv/bin:$PATH"
 
-ENTRYPOINT [ "opentelemetry-instrument", "gunicorn", "--no-control-socket", "-b", "0.0.0.0:5000", "app:app" ]
+ENTRYPOINT [ "gunicorn", "--no-control-socket", "-b", "0.0.0.0:5000", "app:app" ]
