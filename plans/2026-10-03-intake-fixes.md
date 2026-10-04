@@ -260,10 +260,12 @@ else:
 - `test_signature_helper`: fixed secret and body, assert `webhook_signature_ok(body, correct)` is True and False for a tampered body and for `None`. Compute `correct` once with Python's `hmac` in the test using the same formula is NOT acceptable (it proves the mock); instead paste a constant computed by hand once: secret `test`, body `b'{"event_name":"item:added"}'`, expected `base64(HMAC-SHA256)` as a literal string, and verify the literal against the Todoist docs' example if one is present.
 
 ### Success Criteria (2a)
-- [ ] `make check` green; CI green; merged; deploy green
-- [ ] Dan tags one task; `fly logs --no-tail` shows `webhook signature ok` for that delivery and no `mismatch` line
+- [x] `make check` green; CI green; merged; deploy green
+- [x] Dan tags one task; `fly logs --no-tail` shows `webhook signature ok` for that delivery and no `mismatch` line
 
 **Pause until that line is seen.** If a genuine Todoist delivery logs `mismatch`, STOP: the algorithm or header assumption is wrong; do not proceed to 2b. Once one real delivery matches, 2b goes the same day.
+
+**2a result (2026-10-04):** PR #33 merged as 51f94c8, release v72. Dan tagged a task at 22:27:39 UTC and the Fly log showed `webhook signature ok` for that delivery; an unsigned probe logged the mismatch warning and was accepted, as designed. Scheme confirmed first-hand; 2b proceeds the same day.
 
 ### PR 2b: enforce
 - Replace the warning branch with `abort(401)`.

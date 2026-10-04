@@ -32,31 +32,31 @@ def _wire(monkeypatch, reminders):
     return calls
 
 
-def test_adds_reminder_for_mapped_label(client, user, monkeypatch):
+def test_adds_reminder_for_mapped_label(post_webhook, user, monkeypatch):
     calls = _wire(monkeypatch, reminders=[])
-    r = client.post("/webhook", json=_event(["Home"]))
+    r = post_webhook(_event(["Home"]))
     assert r.status_code == 200
     assert calls["add"] == [("tok", ITEM, "Home", 1.0, 2.0, "on_enter", 100.0)]
     assert calls["delete"] == []
 
 
-def test_skips_when_reminder_exists(client, user, monkeypatch):
+def test_skips_when_reminder_exists(post_webhook, user, monkeypatch):
     calls = _wire(monkeypatch, reminders=[HOME_REMINDER])
-    r = client.post("/webhook", json=_event(["Home"]))
+    r = post_webhook(_event(["Home"]))
     assert r.status_code == 200
     assert calls["add"] == []
     assert calls["delete"] == []
 
 
-def test_deletes_reminder_when_label_removed(client, user, monkeypatch):
+def test_deletes_reminder_when_label_removed(post_webhook, user, monkeypatch):
     calls = _wire(monkeypatch, reminders=[HOME_REMINDER])
-    r = client.post("/webhook", json=_event([]))
+    r = post_webhook(_event([]))
     assert r.status_code == 200
     assert calls["add"] == []
     assert calls["delete"] == [("tok", "r1")]
 
 
-def test_api_failure_does_not_delete(client, user, monkeypatch):
+def test_api_failure_does_not_delete(post_webhook, user, monkeypatch):
     """B12: a Todoist API failure must not read as 'task has no labels'."""
 
     def down(endpoint, token):
@@ -67,6 +67,21 @@ def test_api_failure_does_not_delete(client, user, monkeypatch):
     monkeypatch.setattr(app_module, "todoist_get_reminders", lambda token: [HOME_REMINDER])
     monkeypatch.setattr(app_module, "todoist_add_reminder", lambda *a: None)
     monkeypatch.setattr(app_module, "todoist_delete_reminder", lambda *a: calls["delete"].append(a))
-    r = client.post("/webhook", json=_event(["Home"]))
+    r = post_webhook(_event(["Home"]))
     assert r.status_code == 503
     assert calls["delete"] == []
+
+
+def test_rejects_unsigned_delivery(post_webhook, user, monkeypatch):
+    """B1: without Todoist's signature nothing is read, added or deleted."""
+    calls = _wire(monkeypatch, reminders=[HOME_REMINDER])
+    r = post_webhook(_event([]), signature=None)
+    assert r.status_code == 401
+    assert calls == {"add": [], "delete": []}
+
+
+def test_rejects_wrong_signature(post_webhook, user, monkeypatch):
+    calls = _wire(monkeypatch, reminders=[HOME_REMINDER])
+    r = post_webhook(_event([]), signature="bm90IHRoZSBzaWduYXR1cmU=")
+    assert r.status_code == 401
+    assert calls == {"add": [], "delete": []}

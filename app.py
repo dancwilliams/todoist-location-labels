@@ -369,12 +369,11 @@ def create_label_location():
 @tracer.start_as_current_span("webhook")
 def webhook():
     log_request("/webhook")
-    # Phase 2a: verify and log only. Enforcement (401) follows once a real
-    # Todoist delivery has been seen to match.
-    if webhook_signature_ok(request.get_data(), request.headers.get("X-Todoist-Hmac-SHA256")):
-        app.logger.info("webhook signature ok")
-    else:
-        app.logger.warning("webhook signature mismatch (not enforced yet)")
+    # Only Todoist knows the client secret, so only Todoist can sign a delivery.
+    # Checked before the body is trusted for anything.
+    if not webhook_signature_ok(request.get_data(), request.headers.get("X-Todoist-Hmac-SHA256")):
+        app.logger.warning("webhook rejected: bad or missing signature")
+        return abort(401)
     event = request.json
     if event["event_name"] not in ["item:added", "item:updated"]:
         return ""
