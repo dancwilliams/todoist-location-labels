@@ -1,3 +1,7 @@
+import base64
+import hashlib
+import hmac
+import json
 import os
 
 os.environ.setdefault("DATABASE_URL", "sqlite://")
@@ -41,3 +45,23 @@ def user(client):
     )
     app_module.db.session.commit()
     return u
+
+
+@pytest.fixture
+def post_webhook(client, monkeypatch):
+    """POST an event to /webhook signed the way Todoist signs it (secret "test").
+
+    Pass signature=None to send no header, or a string to send a wrong one.
+    """
+    monkeypatch.setattr(app_module, "client_secret", "test")
+
+    def post(event, signature="valid"):
+        body = json.dumps(event).encode()
+        headers = {"Content-Type": "application/json"}
+        if signature == "valid":
+            signature = base64.b64encode(hmac.new(b"test", body, hashlib.sha256).digest()).decode()
+        if signature is not None:
+            headers["X-Todoist-Hmac-SHA256"] = signature
+        return client.post("/webhook", data=body, headers=headers)
+
+    return post

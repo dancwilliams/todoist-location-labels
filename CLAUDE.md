@@ -35,7 +35,7 @@ The app talks to **Todoist API v1** (`https://api.todoist.com/api/v1/`) exclusiv
   - Fetching reminders (`resource_types=["reminders", "reminders_location"]`)
   - `reminder_add` command (type `location`, args: `item_id`, `name`, `loc_lat`, `loc_long`, `loc_trigger`, `radius`)
   - `reminder_delete` command
-- **Todoist Webhooks** — `/webhook` receives `item:added` / `item:updated` events
+- **Todoist Webhooks** — `/webhook` receives `item:added` / `item:updated` events. Every delivery is verified against `X-Todoist-Hmac-SHA256` (base64 HMAC-SHA256 of the raw body, keyed with `TODOIST_CLIENT_SECRET`); anything else gets 401 before the body is read. Confirmed against a real delivery on 2026-10-04. Tests sign with the `post_webhook` fixture.
 - **Google Maps Places API** — address autocomplete in the UI
 
 ### Label ID / Name Mapping (webhook behavior)
