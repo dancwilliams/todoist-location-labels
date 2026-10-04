@@ -16,9 +16,18 @@ Automatically add location-based reminders to Todoist tasks by assigning labels.
 - **PostgreSQL** via SQLAlchemy
 - **Todoist API v1** for labels, reminders, and webhooks
 - **Google Maps Places API** for address autocomplete
-- **OpenTelemetry** for tracing
 - **uv** for dependency management
 - **ruff** for linting/formatting
+
+## Cloud dependencies
+
+Nothing works offline. The service depends on:
+
+- **Fly.io** for hosting, and a Fly Postgres app for data
+- **Todoist API** for OAuth, labels, reminders and webhooks
+- **Google Maps Places** for address autocomplete (the API key is served to the browser by design)
+- **Google Analytics**, only when `GOOGLE_ANALYTICS_ID` is set
+- Bootstrap and Font Awesome from public CDNs
 
 ## Development
 

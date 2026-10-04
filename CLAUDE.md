@@ -63,17 +63,17 @@ make check                    # what CI runs: ruff format --check, ruff check, m
 ## Deployment
 - **Platform**: Fly.io (`fly.toml`)
 - **Container**: Python 3.13 Alpine + `uv sync --frozen --no-dev`
-- **Entrypoint**: `opentelemetry-instrument gunicorn --no-control-socket -b 0.0.0.0:5000 app:app`
+- **Entrypoint**: `gunicorn --no-control-socket -b 0.0.0.0:5000 app:app`
 - `--no-control-socket` is load-bearing. gunicorn 25 starts its control socket in a background thread that logs just as the master forks the first worker; a fork that lands mid-write leaves the worker deadlocked on its first log line, and gunicorn's timeout never fires for a worker that has not sent its first heartbeat. The machine then sits "started" and unreachable until Fly autostops it (outage 2026-10-04, 22:01-22:06 UTC).
 - `master` requires the `check` status; no reviewers (solo repo). Merging to master deploys.
-- Instrumented with OpenTelemetry, exporting to Honeycomb
 
 ## Development Notes
 - Formatting + linting via `ruff` (config in `pyproject.toml`; rules E/F/I/N/W/UP, line length 100, double quotes); `mypy app.py` non-strict with `warn_return_any`
 - Tests in `tests/` (pytest, coverage printed). `tests/conftest.py` sets dummy env vars before importing `app`, because the module reads its secrets at import time. The webhook reconciliation is the path that must stay covered.
 - The webhook fails closed: if the labels or reminders fetch raises, it answers 503 and Todoist redelivers (15 min, up to 3 times). An empty labels list is never inferred from an API failure.
 - Tenacity retry wrapper on Todoist GETs (3 attempts, 2s wait) — note: sync POSTs are not wrapped
-- OpenTelemetry tracing via Honeycomb on all routes (`@tracer.start_as_current_span`)
+- No tracing. The OpenTelemetry stack was removed 2026-10-04: it had recorded nothing since the March migration (no configurator was installed, so every span was a no-op) and nobody missed it.
+- `log_request` skips requests without `Fly-Client-IP`, which is how Fly's 15-second health check stays out of the log.
 - Flask-Session with filesystem backend for session persistence
-- SQLAlchemy pool configured with `pre_ping`, size 10, recycle 299s
+- SQLAlchemy engine: `pool_pre_ping` on, `pool_recycle` 299 s, set through `SQLALCHEMY_ENGINE_OPTIONS` (Flask-SQLAlchemy 3 ignores the old `SQLALCHEMY_POOL_*` keys)
 - Dependencies managed by `uv` (`pyproject.toml` + `uv.lock`); there is no `requirements.txt`
