@@ -1,4 +1,6 @@
 import base64
+import hashlib
+import hmac
 import logging
 import os
 import sys
@@ -108,6 +110,14 @@ TODOIST_API_BASE = "https://api.todoist.com/api/v1"
 
 def todoist_headers(token):
     return {"Authorization": f"Bearer {token}"}
+
+
+def webhook_signature_ok(raw_body: bytes, header: str | None) -> bool:
+    """Todoist signs each delivery: base64(HMAC-SHA256(client_secret, raw body))."""
+    expected = base64.b64encode(
+        hmac.new(client_secret.encode(), raw_body, hashlib.sha256).digest()
+    ).decode()
+    return header is not None and hmac.compare_digest(expected, header)
 
 
 @retry(
@@ -359,6 +369,12 @@ def create_label_location():
 @tracer.start_as_current_span("webhook")
 def webhook():
     log_request("/webhook")
+    # Phase 2a: verify and log only. Enforcement (401) follows once a real
+    # Todoist delivery has been seen to match.
+    if webhook_signature_ok(request.get_data(), request.headers.get("X-Todoist-Hmac-SHA256")):
+        app.logger.info("webhook signature ok")
+    else:
+        app.logger.warning("webhook signature mismatch (not enforced yet)")
     event = request.json
     if event["event_name"] not in ["item:added", "item:updated"]:
         return ""

@@ -212,14 +212,18 @@ Then `gh api repos/dancwilliams/todoist-location-labels/branches/master/protecti
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `make check` exits 0 locally and prints a coverage table with `app.py` on it
-- [ ] CI run on the PR: `check (3.13)` green; `check (3.14)` green or removed with the CLAUDE.md note
-- [ ] `git ls-files .env.example` lists the file; `git check-ignore .env .env.local` lists both
-- [ ] After merge: `gh api .../branches/master/protection` returns 200 with the context above
-- [ ] Deploy job green; `curl -s -o /dev/null -w '%{http_code}' https://todoist-location-labels.fly.dev/` prints 200
+- [x] `make check` exits 0 locally and prints a coverage table with `app.py` on it
+- [x] CI run on the PR: `check (3.13)` green; `check (3.14)` green or removed with the CLAUDE.md note
+- [x] `git ls-files .env.example` lists the file; `git check-ignore .env .env.local` lists both
+- [x] After merge: `gh api .../branches/master/protection` returns 200 with the context above
+- [x] Deploy job green; `curl -s -o /dev/null -w '%{http_code}' https://todoist-location-labels.fly.dev/` prints 200
 
 #### Manual Verification
-- [ ] End-to-end steps 1 to 5 (the only behaviour change is B12, which is invisible when Todoist is healthy)
+- [x] End-to-end steps 1 to 5 (the only behaviour change is B12, which is invisible when Todoist is healthy)
+
+---
+
+**Phase 1 result (2026-10-04):** PR #31 merged as f01443b, release v70; branch protection requires `check (3.13)` and `check (3.14)`. Manual end-to-end passed at 22:20 UTC (add and delete both `ok` in the Fly log). Unplanned: an intermittent gunicorn boot hang took the site down 22:01-22:06 UTC; fixed by `--no-control-socket` in PR #32 (8bf8241, release v71), cause recorded in CLAUDE.md under Deployment. Observed in the log during the manual test: task and reminder IDs are base32 (`6hgv...`), the tested label ID is numeric; the Phase 5 gate on label IDs stands.
 
 ---
 
