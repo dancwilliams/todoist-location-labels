@@ -30,16 +30,18 @@ Automatically add location-based reminders to Todoist tasks by assigning labels.
 ### Setup
 
 ```bash
+cp .env.example .env           # fill in the values
 uv sync
 uv run python app.py initdb   # Create database tables
 uv run python app.py           # Dev server on port 5000
 ```
 
-### Linting
+### Checks
+
+One command runs what CI runs (ruff format check, ruff lint, mypy, pytest with coverage):
 
 ```bash
-uv run ruff format app.py
-uv run ruff check app.py
+make check
 ```
 
 ### Environment Variables
@@ -64,7 +66,7 @@ fly deploy
 
 ## CI/CD
 
-- **CI**: Ruff lint/format + compile check on every push and PR
+- **CI**: `make check` (ruff format/lint, mypy, pytest) on Python 3.13 and 3.14, every push and PR
 - **Deploy**: Auto-deploy to Fly.io on push to master
 - **Dependabot**: Weekly dependency updates for Python, GitHub Actions, and Docker
 

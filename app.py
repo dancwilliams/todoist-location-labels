@@ -17,7 +17,6 @@ from flask import (
     session,
     url_for,
 )
-from flask_session import Session  # Import Session
 from flask_sqlalchemy import SQLAlchemy
 from opentelemetry import trace
 from tenacity import (
@@ -26,6 +25,8 @@ from tenacity import (
     stop_after_attempt,
     wait_fixed,
 )
+
+from flask_session import Session  # type: ignore[attr-defined]
 
 app = Flask(__name__)
 
@@ -41,9 +42,7 @@ app.config["PERMANENT_SESSION_LIFETIME"] = 86400  # e.g., one day
 # pool_pre_ping should help handle DB connection drops
 app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {"pool_pre_ping": True}
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get(
-    "DATABASE_URL", "sqlite:///test.db"
-)
+app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("DATABASE_URL", "sqlite:///test.db")
 app.config["SQLALCHEMY_POOL_SIZE"] = 10
 app.config["SQLALCHEMY_POOL_TIMEOUT"] = 30
 app.config["SQLALCHEMY_POOL_RECYCLE"] = 299
@@ -60,17 +59,15 @@ tracer = trace.get_tracer("todoist-flask")
 Session(app)  # Initialize Flask-Session
 
 
-class User(db.Model):
+class User(db.Model):  # type: ignore[name-defined]
     id = db.Column(db.BigInteger, primary_key=True)
     oauth_token = db.Column(db.String(64), nullable=True)
 
 
-class LocationLabel(db.Model):
+class LocationLabel(db.Model):  # type: ignore[name-defined]
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.BigInteger, db.ForeignKey("user.id"), nullable=False)
-    user = db.relationship(
-        "User", backref=db.backref("location_labels", lazy="dynamic")
-    )
+    user = db.relationship("User", backref=db.backref("location_labels", lazy="dynamic"))
     label_id = db.Column(db.BigInteger, nullable=False, index=True)
     name = db.Column(db.String, nullable=False)
     long = db.Column(db.Float, nullable=False)
@@ -138,33 +135,25 @@ def todoist_api_get(endpoint, token):
 
 
 def todoist_get_labels(token):
-    """Fetch all labels for a user."""
-    try:
-        result = todoist_api_get("labels", token)
-        # API v1 returns paginated dict with 'results' key
-        if isinstance(result, dict) and "results" in result:
-            labels = result["results"]
-        elif isinstance(result, list):
-            labels = result
-        else:
-            app.logger.warning("Unexpected labels response: %s", str(result)[:300])
-            labels = []
-        app.logger.info("Fetched %d labels", len(labels))
-        return labels
-    except requests.exceptions.RequestException as e:
-        app.logger.error(f"Failed to fetch labels: {e}")
-        return []
+    """Fetch all labels for a user. Raises RequestException on API failure."""
+    result = todoist_api_get("labels", token)
+    # API v1 returns paginated dict with 'results' key
+    if isinstance(result, dict) and "results" in result:
+        labels = result["results"]
+    elif isinstance(result, list):
+        labels = result
+    else:
+        app.logger.warning("Unexpected labels response: %s", str(result)[:300])
+        labels = []
+    app.logger.info("Fetched %d labels", len(labels))
+    return labels
 
 
 def todoist_get_user(token):
-    """Fetch user profile info."""
-    try:
-        result = todoist_api_get("user", token)
-        app.logger.info("User API returned: %s", str(result)[:200])
-        return result
-    except requests.exceptions.RequestException as e:
-        app.logger.error(f"Failed to fetch user: {e}")
-        return {}
+    """Fetch user profile info. Raises RequestException on API failure."""
+    result = todoist_api_get("user", token)
+    app.logger.info("User API returned: %s", str(result)[:200])
+    return result
 
 
 def todoist_sync(token, resource_types=None, commands=None):
@@ -181,13 +170,9 @@ def todoist_sync(token, resource_types=None, commands=None):
 
 
 def todoist_get_reminders(token):
-    """Fetch all reminders via sync."""
-    try:
-        result = todoist_sync(token, resource_types=["reminders", "reminders_location"])
-        return result.get("reminders", [])
-    except requests.exceptions.RequestException as e:
-        app.logger.error(f"Failed to fetch reminders: {e}")
-        return []
+    """Fetch all reminders via sync. Raises RequestException on API failure."""
+    result = todoist_sync(token, resource_types=["reminders", "reminders_location"])
+    return result.get("reminders", [])
 
 
 def todoist_add_reminder(token, item_id, name, loc_lat, loc_long, loc_trigger, radius):
@@ -240,9 +225,13 @@ def index():
     if user_id is not None:
         user = User.query.get(user_id)
         app.logger.info(f"user_id: {user_id}")
-        labels = todoist_get_labels(user.oauth_token)
+        try:
+            labels = todoist_get_labels(user.oauth_token)
+            user_info = todoist_get_user(user.oauth_token)
+        except requests.exceptions.RequestException as e:
+            app.logger.error("Todoist API unavailable, rendering without labels: %s", e)
+            labels, user_info = [], {}
         kwargs["labels"] = labels
-        user_info = todoist_get_user(user.oauth_token)
         kwargs["user_full_name"] = user_info.get("full_name", "")
         # map from label id to location labels
         location_labels = {}
@@ -298,7 +287,11 @@ def oauth_redirect():
         app.logger.error(f"Response body: {resp.text}")
         return abort(500)
     access_token = resp.json()["access_token"]
-    user_info = todoist_get_user(access_token)
+    try:
+        user_info = todoist_get_user(access_token)
+    except requests.exceptions.RequestException as e:
+        app.logger.error("Failed to fetch user info after OAuth: %s", e)
+        return abort(502)
     if not user_info:
         app.logger.error("Failed to fetch user info after OAuth")
         return abort(500)
@@ -385,8 +378,17 @@ def webhook():
 
     token = user.oauth_token
 
-    # Get all user's labels (API v1) to map names -> IDs
-    all_labels = todoist_get_labels(token)
+    # Both reads must succeed before anything is added or deleted: a failed
+    # labels fetch must not read as "task has no labels". A non-200 makes
+    # Todoist redeliver the event (15 min later, up to three times).
+    try:
+        all_labels = todoist_get_labels(token)
+        all_reminders = todoist_get_reminders(token)
+    except requests.exceptions.RequestException as e:
+        app.logger.error("Todoist API unavailable, asking for redelivery: %s", e)
+        return "todoist api error", 503
+
+    # Map label names -> IDs (API v1 webhooks carry names)
     label_name_to_id = {label["name"]: label["id"] for label in all_labels}
     app.logger.info("User has %d labels, name->id map built", len(all_labels))
 
@@ -402,13 +404,11 @@ def webhook():
 
     app.logger.info("Task label IDs: %s", task_label_ids)
 
-    # Get existing location reminders for this item
-    all_reminders = todoist_get_reminders(token)
+    # Existing location reminders for this item
     item_reminders = [
         r
         for r in all_reminders
-        if r.get("type") == "location"
-        and str(r.get("item_id")) == str(event_data["id"])
+        if r.get("type") == "location" and str(r.get("item_id")) == str(event_data["id"])
     ]
     app.logger.info("Existing location reminders for item: %d", len(item_reminders))
 
@@ -433,9 +433,7 @@ def webhook():
                 try:
                     todoist_delete_reminder(token, reminder["id"])
                 except Exception as e:
-                    app.logger.error(
-                        "Failed to delete reminder %s: %s", reminder["id"], e
-                    )
+                    app.logger.error("Failed to delete reminder %s: %s", reminder["id"], e)
                 break
 
     # Add reminders for matching labels
@@ -480,9 +478,7 @@ def webhook():
                     loc_label.radius,
                 )
             except Exception as e:
-                app.logger.error(
-                    "Failed to add reminder for item %s: %s", event_data["id"], e
-                )
+                app.logger.error("Failed to add reminder for item %s: %s", event_data["id"], e)
 
     return "ok"
 
