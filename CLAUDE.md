@@ -63,7 +63,8 @@ make check                    # what CI runs: ruff format --check, ruff check, m
 ## Deployment
 - **Platform**: Fly.io (`fly.toml`)
 - **Container**: Python 3.13 Alpine + `uv sync --frozen --no-dev`
-- **Entrypoint**: `opentelemetry-instrument gunicorn -b 0.0.0.0:5000 app:app`
+- **Entrypoint**: `opentelemetry-instrument gunicorn --no-control-socket -b 0.0.0.0:5000 app:app`
+- `--no-control-socket` is load-bearing. gunicorn 25 starts its control socket in a background thread that logs just as the master forks the first worker; a fork that lands mid-write leaves the worker deadlocked on its first log line, and gunicorn's timeout never fires for a worker that has not sent its first heartbeat. The machine then sits "started" and unreachable until Fly autostops it (outage 2026-10-04, 22:01-22:06 UTC).
 - `master` requires the `check` status; no reviewers (solo repo). Merging to master deploys.
 - Instrumented with OpenTelemetry, exporting to Honeycomb
 
