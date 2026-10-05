@@ -76,6 +76,8 @@ make check                    # what CI runs: ruff format --check, ruff check, m
 - Deleting a mapping is `POST /delete_label_location/<row id>` (the `LocationLabel.id`, not the Todoist label id). GET is refused so a cross-site link cannot delete.
 - No tracing. The OpenTelemetry stack was removed 2026-10-04: it had recorded nothing since the March migration (no configurator was installed, so every span was a no-op) and nobody missed it.
 - `log_request` skips requests without `Fly-Client-IP`, which is how Fly's 15-second health check stays out of the log.
-- Flask-Session with filesystem backend for session persistence
+- Sessions are Flask's signed cookie (`Secure`, `SameSite=Lax`, 30 days), signed with `TODOIST_FLASK_SECRET_KEY`. It holds `user_id` and the OAuth state only; the Todoist token stays in Postgres. Rotating the secret logs everyone out, which is the only revocation path. Flask-Session was removed 2026-10-05: its filesystem store was wiped on every deploy.
+- `LocationLabel` is unique on `(user_id, label_id)`. Submitting an already-mapped label edits it. There is no migration tool: the production constraint was added by hand (`ALTER TABLE location_label ADD CONSTRAINT uq_location_label_user_label UNIQUE (user_id, label_id)`), and `initdb` creates it on a fresh database.
+- Production data is database `todoist_location_labels` on Fly app `dcw-postgres-dev`. A second database there, `dcw_todoist_location`, is a stale copy with no writes since at least 2025-02; the app does not use it.
 - SQLAlchemy engine: `pool_pre_ping` on, `pool_recycle` 299 s, set through `SQLALCHEMY_ENGINE_OPTIONS` (Flask-SQLAlchemy 3 ignores the old `SQLALCHEMY_POOL_*` keys)
 - Dependencies managed by `uv` (`pyproject.toml` + `uv.lock`); there is no `requirements.txt`

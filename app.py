@@ -6,6 +6,7 @@ import os
 import sys
 import urllib.parse
 import uuid
+from datetime import timedelta
 
 import requests
 from flask import (
@@ -18,7 +19,6 @@ from flask import (
     session,
     url_for,
 )
-from flask_session import Session  # type: ignore[attr-defined]
 from flask_sqlalchemy import SQLAlchemy
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -29,10 +29,13 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 app.logger.setLevel(logging.INFO)
 
-# Configure your app for Flask-Session
-app.config["SESSION_TYPE"] = "filesystem"
-app.config["SESSION_PERMANENT"] = True
-app.config["PERMANENT_SESSION_LIFETIME"] = 86400  # e.g., one day
+# The session is Flask's signed cookie: it holds only user_id and the OAuth
+# state, needs no server-side store, and so survives deploys and restarts.
+app.config.update(
+    SESSION_COOKIE_SECURE=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    PERMANENT_SESSION_LIFETIME=timedelta(days=30),
+)
 
 # pre_ping and recycle guard against Fly Postgres dropping idle connections
 app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {"pool_pre_ping": True, "pool_recycle": 299}
@@ -47,15 +50,17 @@ google_map_api_key = os.environ["GOOGLE_MAP_API_KEY"]
 google_analytics_id = os.environ.get("GOOGLE_ANALYTICS_ID")
 
 
-Session(app)
-
-
 class User(db.Model):  # type: ignore[name-defined]
     id = db.Column(db.BigInteger, primary_key=True)
     oauth_token = db.Column(db.String(64), nullable=True)
 
 
 class LocationLabel(db.Model):  # type: ignore[name-defined]
+    # One mapping per user and label. Production has this constraint from a
+    # one-off ALTER TABLE (2026-10-05); create_all only adds it to new databases.
+    __table_args__ = (
+        db.UniqueConstraint("user_id", "label_id", name="uq_location_label_user_label"),
+    )
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.BigInteger, db.ForeignKey("user.id"), nullable=False)
     user = db.relationship("User", backref=db.backref("location_labels", lazy="dynamic"))
@@ -300,6 +305,7 @@ def oauth_redirect():
         user.oauth_token = access_token
     db.session.commit()
     session["user_id"] = user.id
+    session.permanent = True  # 30 days, see PERMANENT_SESSION_LIFETIME
     return redirect(url_for("index"))
 
 
@@ -338,16 +344,16 @@ def create_label_location():
         return abort(400)  # e.g. an address typed without picking a suggestion: no lat/long
     if trigger not in ("on_enter", "on_leave"):
         return abort(400)
-    location_label = LocationLabel(
-        user=user,
-        label_id=label_id,
-        loc_trigger=trigger,
-        long=long,
-        lat=lat,
-        name=address,
-        radius=radius,
-    )
-    db.session.add(location_label)
+    # Submitting a label that is already mapped edits that mapping.
+    location_label = LocationLabel.query.filter_by(user_id=user.id, label_id=label_id).first()
+    if location_label is None:
+        location_label = LocationLabel(user=user, label_id=label_id)
+        db.session.add(location_label)
+    location_label.loc_trigger = trigger
+    location_label.long = long
+    location_label.lat = lat
+    location_label.name = address
+    location_label.radius = radius
     db.session.commit()
     return redirect(url_for("index"))
 

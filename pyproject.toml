@@ -9,7 +9,6 @@ dependencies = [
     "requests",
     "Flask",
     "Flask-SQLAlchemy",
-    "Flask-Session",
 ]
 
 [dependency-groups]
@@ -43,6 +42,3 @@ ignore_missing_imports = true
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "--cov=app --cov-report=term-missing"
-
-[tool.ruff.lint.isort]
-known-third-party = ["flask_session"]  # a runtime flask_session/ cache dir must not flip the sort
