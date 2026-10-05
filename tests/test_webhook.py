@@ -99,3 +99,14 @@ def test_unexpected_labels_shape_does_not_delete(post_webhook, user, monkeypatch
     r = post_webhook(_event(["Home"]))
     assert r.status_code == 503
     assert calls["delete"] == []
+
+
+def test_failed_add_asks_for_redelivery(post_webhook, user, monkeypatch):
+    """A reminder that could not be created must not be reported to Todoist as handled."""
+    _wire(monkeypatch, reminders=[])
+
+    def down(*args):
+        raise requests.exceptions.ConnectionError("todoist down")
+
+    monkeypatch.setattr(app_module, "todoist_add_reminder", down)
+    assert post_webhook(_event(["Home"])).status_code == 503

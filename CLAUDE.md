@@ -16,6 +16,7 @@ Originally by @fangpenlin, then @IcyPalm, now maintained by @dancwilliams.
 4. Webhook handler reconciles the task's labels against configured location-labels:
    - Adds location reminders for newly-matching labels (dedupes against existing reminders)
    - Deletes reminders whose matching label is no longer on the task
+5. Editing or deleting a mapping in the UI sweeps Todoist first (`sweep_reminders`): every reminder made from that mapping is deleted, and for an edit re-added on the same task at the new place. If Todoist cannot be reached the request answers 502 and the mapping is left as it was.
 
 ### Key Components
 - **`app.py`** - All application logic (routes, models, webhook handler, Todoist API client)
@@ -35,7 +36,7 @@ The app talks to **Todoist API v1** (`https://api.todoist.com/api/v1/`) exclusiv
   - Fetching reminders (`resource_types=["reminders", "reminders_location"]`)
   - `reminder_add` command (type `location`, args: `item_id`, `name`, `loc_lat`, `loc_long`, `loc_trigger`, `radius`)
   - `reminder_delete` command
-- **Todoist Webhooks** — `/webhook` receives `item:added` / `item:updated` events. Every delivery is verified against `X-Todoist-Hmac-SHA256` (base64 HMAC-SHA256 of the raw body, keyed with `TODOIST_CLIENT_SECRET`); anything else gets 401 before the body is read. Confirmed against a real delivery on 2026-10-04. Tests sign with the `post_webhook` fixture.
+- **Todoist Webhooks** — `/webhook` receives `item:added` / `item:updated` events. Every delivery is verified against `X-Todoist-Hmac-SHA256` (base64 HMAC-SHA256 of the raw body, keyed with `TODOIST_CLIENT_SECRET`); anything else gets 401 before the body is parsed (the raw bytes are read to compute the HMAC). Confirmed against a real delivery on 2026-10-04. Tests sign with the `post_webhook` fixture.
 - **Google Maps Places API** — address autocomplete in the UI
 
 ### Label ID / Name Mapping (webhook behavior)
@@ -68,10 +69,13 @@ make check                    # what CI runs: ruff format --check, ruff check, m
 - `master` requires the `check` status; no reviewers (solo repo). Merging to master deploys.
 
 ## Development Notes
-- Formatting + linting via `ruff` (config in `pyproject.toml`; rules E/F/I/N/W/UP, line length 100, double quotes); `mypy app.py` non-strict with `warn_return_any`
-- Tests in `tests/` (pytest, coverage printed). `tests/conftest.py` sets dummy env vars before importing `app`, because the module reads its secrets at import time. The webhook reconciliation is the path that must stay covered.
-- The webhook fails closed: if the labels or reminders fetch raises, it answers 503 and Todoist redelivers (15 min, up to 3 times). An empty labels list is never inferred from an API failure.
-- All outbound Todoist calls go through one `requests.Session` (`todoist_http`) with urllib3 `Retry`: 429 and 5xx retried three times (1, 2, 4 s), GET and POST alike; a 401 is not retried. POST retry is safe because every sync command carries a `uuid` Todoist dedupes on.
+- Formatting + linting via `ruff` (config in `pyproject.toml`; rules E/F/I/N/W/UP, line length 100, double quotes); `mypy app.py` non-strict with `warn_return_any` and `check_untyped_defs`
+- Tests in `tests/` (pytest, coverage printed). `tests/conftest.py` sets dummy env vars before importing `app`, because the module reads its secrets at import time. The webhook reconciliation is the path that must stay covered. `fake_todoist` is a local HTTP server standing in for Todoist, for tests of what is sent over the wire.
+- The webhook fails closed: if the labels or reminders fetch raises, or an add or delete fails, it answers 503 and Todoist redelivers (15 min, up to 3 times). An empty labels list is never inferred from an API failure. Reconciliation is safe to repeat.
+- A mapping and its reminders are linked only by value: `reminder_is_at` compares name, trigger and radius. The app stores no reminder ids. Two consequences: anything that changes a mapping must go through `sweep_reminders` or its reminders are stranded, and a reminder the user made by hand with identical values is treated as the app's.
+- All outbound Todoist calls go through one `requests.Session` (`todoist_http`) with urllib3 `Retry`: a 429 or 5xx answer is retried three times after waits of 0, 2 and 4 s (measured against a stub: 4 attempts, 6.0 s), GET and POST alike; a 401 is not retried. POST retry is safe because every sync command carries a `uuid` Todoist dedupes on. A stall is not retried (`read=0`): each request times out after `TODOIST_TIMEOUT` (10 s) and fails, because gunicorn runs one sync worker with a 30 s timeout. Slow error answers are still retried, so four 5xx answers that each take close to 10 s could exceed it; that has not been seen.
+- A sync call that only sends commands omits `resource_types` and `sync_token`; with them Todoist returns the whole account on every reminder add or delete.
+- The mapped address is not logged; webhook lines carry the mapping's row id.
 - `todoist_get_labels` follows `next_cursor` until it is empty; reading only the first page would make later labels look removed.
 - Deleting a mapping is `POST /delete_label_location/<row id>` (the `LocationLabel.id`, not the Todoist label id). GET is refused so a cross-site link cannot delete.
 - No tracing. The OpenTelemetry stack was removed 2026-10-04: it had recorded nothing since the March migration (no configurator was installed, so every span was a no-op) and nobody missed it.

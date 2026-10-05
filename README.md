@@ -8,6 +8,7 @@ Automatically add location-based reminders to Todoist tasks by assigning labels.
 2. Map labels to locations using Google Places autocomplete
 3. When you add a mapped label to a task, the webhook fires and creates a location reminder
 4. Get reminded when you arrive at or leave the location
+5. Change or delete a mapping, and the reminders it already created are moved or removed with it
 
 ## Stack
 

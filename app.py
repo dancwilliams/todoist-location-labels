@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import hmac
+import json
 import logging
 import os
 import sys
@@ -12,7 +13,6 @@ import requests
 from flask import (
     Flask,
     abort,
-    json,
     redirect,
     render_template,
     request,
@@ -91,22 +91,30 @@ def log_request(route):
 
 TODOIST_API_BASE = "https://api.todoist.com/api/v1"
 
-# One session for every outbound call. 429 and 5xx are retried three times
-# (1, 2, 4 s), GET and POST alike: sync commands carry a uuid Todoist dedupes
-# on, so a retried POST cannot apply twice. Anything else, a 401 included,
-# fails at once. Retry-After is ignored so a rate limit cannot hold a worker
-# for minutes; the webhook answers 503 and Todoist redelivers instead.
+TODOIST_TIMEOUT = 10  # seconds, per request
+SYNC_BATCH = 100  # Todoist accepts at most 100 commands per sync request
+
+# One session for every outbound call. A 429 or 5xx answer is retried three
+# times, after waits of 0, 2 and 4 s (measured: urllib3 does not wait before
+# the first retry), GET and POST alike: sync commands carry a uuid Todoist
+# dedupes on, so a retried POST cannot apply twice. Anything else, a 401
+# included, fails at once. Retry-After is ignored so a rate limit cannot hold
+# the worker for minutes.
 todoist_http = requests.Session()
-_retry = Retry(
-    total=3,
-    backoff_factor=1,
-    status_forcelist=(429, 500, 502, 503, 504),
-    allowed_methods=("GET", "POST"),
-    respect_retry_after_header=False,
-    raise_on_status=False,
+todoist_http.mount(
+    "https://",
+    HTTPAdapter(
+        max_retries=Retry(
+            total=3,
+            read=0,  # a stall is not retried: 4 x 10 s would outlast gunicorn's 30 s worker timeout
+            backoff_factor=1,
+            status_forcelist=(429, 500, 502, 503, 504),
+            allowed_methods=("GET", "POST"),
+            respect_retry_after_header=False,
+            raise_on_status=False,
+        )
+    ),
 )
-todoist_http.mount("https://", HTTPAdapter(max_retries=_retry))
-todoist_http.mount("http://", HTTPAdapter(max_retries=_retry))
 
 
 def todoist_headers(token):
@@ -115,16 +123,17 @@ def todoist_headers(token):
 
 def webhook_signature_ok(raw_body: bytes, header: str | None) -> bool:
     """Todoist signs each delivery: base64(HMAC-SHA256(client_secret, raw body))."""
-    expected = base64.b64encode(
-        hmac.new(client_secret.encode(), raw_body, hashlib.sha256).digest()
-    ).decode()
-    return header is not None and hmac.compare_digest(expected, header)
+    expected = base64.b64encode(hmac.new(client_secret.encode(), raw_body, hashlib.sha256).digest())
+    # Bytes, not str: compare_digest raises on a non-ASCII str, and the header is caller-supplied.
+    return header is not None and hmac.compare_digest(expected, header.encode("latin-1", "replace"))
 
 
 def todoist_api_get(endpoint, token, params=None):
     """GET from Todoist API v1."""
     url = f"{TODOIST_API_BASE}/{endpoint}"
-    response = todoist_http.get(url, headers=todoist_headers(token), params=params, timeout=10)
+    response = todoist_http.get(
+        url, headers=todoist_headers(token), params=params, timeout=TODOIST_TIMEOUT
+    )
     if not response.ok:
         app.logger.error(
             "Todoist API GET %s failed: %s %s body=%s",
@@ -161,14 +170,17 @@ def todoist_get_user(token):
 
 
 def todoist_sync(token, resource_types=None, commands=None):
-    """Call Todoist Sync endpoint (API v1)."""
+    """Call the Todoist sync endpoint (API v1): a read, a batch of commands, or both."""
     url = f"{TODOIST_API_BASE}/sync"
-    data = {
-        "sync_token": "*",
-        "resource_types": json.dumps(resource_types or ["all"]),
-        "commands": json.dumps(commands or []),
-    }
-    response = todoist_http.post(url, headers=todoist_headers(token), data=data, timeout=15)
+    data = {}
+    if resource_types:  # a read; left out for a command, or Todoist returns the whole account
+        data["sync_token"] = "*"
+        data["resource_types"] = json.dumps(resource_types)
+    if commands:
+        data["commands"] = json.dumps(commands)
+    response = todoist_http.post(
+        url, headers=todoist_headers(token), data=data, timeout=TODOIST_TIMEOUT
+    )
     response.raise_for_status()
     return response.json()
 
@@ -179,9 +191,8 @@ def todoist_get_reminders(token):
     return result.get("reminders", [])
 
 
-def todoist_add_reminder(token, item_id, name, loc_lat, loc_long, loc_trigger, radius):
-    """Add a location reminder via sync command."""
-    cmd = {
+def reminder_add_command(item_id, name, loc_lat, loc_long, loc_trigger, radius):
+    return {
         "type": "reminder_add",
         "temp_id": str(uuid.uuid4()),
         "uuid": str(uuid.uuid4()),
@@ -195,33 +206,86 @@ def todoist_add_reminder(token, item_id, name, loc_lat, loc_long, loc_trigger, r
             "radius": radius,
         },
     }
-    result = todoist_sync(token, commands=[cmd])
-    sync_status = result.get("sync_status", {})
-    app.logger.info("reminder_add sync result: %s", sync_status)
-    for k, v in sync_status.items():
-        if v != "ok":
-            app.logger.error("reminder_add failed: %s -> %s", k, v)
-    return result
 
 
-def todoist_delete_reminder(token, reminder_id):
-    """Delete a reminder via sync command."""
-    cmd = {
+def reminder_delete_command(reminder_id):
+    return {
         "type": "reminder_delete",
         "uuid": str(uuid.uuid4()),
         "args": {"id": str(reminder_id)},
     }
-    result = todoist_sync(token, commands=[cmd])
-    sync_status = result.get("sync_status", {})
-    app.logger.info("reminder_delete sync result: %s", sync_status)
-    return result
+
+
+def todoist_run_commands(token, commands, what):
+    """Send sync commands, at most SYNC_BATCH per request, and log any Todoist refused."""
+    for start in range(0, len(commands), SYNC_BATCH):
+        result = todoist_sync(token, commands=commands[start : start + SYNC_BATCH])
+        sync_status = result.get("sync_status", {})
+        app.logger.info("%s sync result: %s", what, sync_status)
+        for k, v in sync_status.items():
+            if v != "ok":
+                app.logger.error("%s failed: %s -> %s", what, k, v)
+
+
+def todoist_add_reminder(token, item_id, name, loc_lat, loc_long, loc_trigger, radius):
+    """Add a location reminder via sync command."""
+    command = reminder_add_command(item_id, name, loc_lat, loc_long, loc_trigger, radius)
+    todoist_run_commands(token, [command], "reminder_add")
+
+
+def todoist_delete_reminder(token, reminder_id):
+    """Delete a reminder via sync command."""
+    todoist_run_commands(token, [reminder_delete_command(reminder_id)], "reminder_delete")
+
+
+def place_of(location_label):
+    """What a reminder is built from: (name, lat, long, trigger, radius)."""
+    return (
+        location_label.name,
+        location_label.lat,
+        location_label.long,
+        location_label.loc_trigger,
+        location_label.radius,
+    )
+
+
+def reminder_is_at(reminder, place):
+    """True if a location reminder carries this place's name, trigger and radius.
+
+    This is the only link between a mapping and the reminders made from it: the
+    app stores no reminder ids. A reminder the user made by hand with the same
+    three values is indistinguishable from one of ours.
+    """
+    name, _lat, _long, loc_trigger, radius = place
+    return (
+        reminder.get("type") == "location"
+        and reminder.get("name") == name
+        and reminder.get("loc_trigger") == loc_trigger
+        and reminder.get("radius") == radius
+    )
+
+
+def sweep_reminders(token, old_place, new_place=None):
+    """Remove every reminder made from a mapping; for an edit, re-add each at the new place.
+
+    Without this, changing or deleting a mapping would strand its reminders: they
+    would match no mapping, so no later webhook could remove them. Raises
+    RequestException on API failure, before or between batches.
+    """
+    commands = []
+    for reminder in todoist_get_reminders(token):
+        if reminder_is_at(reminder, old_place):
+            commands.append(reminder_delete_command(reminder["id"]))
+            if new_place is not None:
+                commands.append(reminder_add_command(reminder["item_id"], *new_place))
+    todoist_run_commands(token, commands, "sweep")
 
 
 @app.route("/")
 def index():
     log_request("/")
     user_id = session.get("user_id")
-    kwargs = {
+    kwargs: dict[str, object] = {
         "google_map_api_key": google_map_api_key,
         "google_analytics_id": google_analytics_id,
     }
@@ -281,7 +345,7 @@ def oauth_redirect():
                 code=code,
                 redirect_uri=url_for("authorize", _external=True),
             ),
-            timeout=10,
+            timeout=TODOIST_TIMEOUT,
         )
         resp.raise_for_status()
     except requests.exceptions.RequestException as err:
@@ -293,9 +357,6 @@ def oauth_redirect():
     except requests.exceptions.RequestException as e:
         app.logger.error("Failed to fetch user info after OAuth: %s", e)
         return abort(502)
-    if not user_info:
-        app.logger.error("Failed to fetch user info after OAuth")
-        return abort(500)
     user_id = user_info["id"]
     user = db.session.get(User, user_id)
     if user is None:
@@ -323,6 +384,11 @@ def delete_label_location(location_label_id):
     location_label = db.session.get(LocationLabel, location_label_id)
     if location_label is None or location_label.user_id != user.id:
         return abort(404)
+    try:
+        sweep_reminders(user.oauth_token, place_of(location_label))
+    except requests.exceptions.RequestException as e:
+        app.logger.error("Could not remove reminders, mapping %s kept: %s", location_label.id, e)
+        return abort(502)
 
     db.session.delete(location_label)
     db.session.commit()
@@ -344,16 +410,28 @@ def create_label_location():
         return abort(400)  # e.g. an address typed without picking a suggestion: no lat/long
     if trigger not in ("on_enter", "on_leave"):
         return abort(400)
-    # Submitting a label that is already mapped edits that mapping.
+    # Submitting a label that is already mapped edits that mapping, and moves
+    # the reminders it has already created to the new place.
+    new_place = (address, lat, long, trigger, radius)
     location_label = LocationLabel.query.filter_by(user_id=user.id, label_id=label_id).first()
     if location_label is None:
         location_label = LocationLabel(user=user, label_id=label_id)
         db.session.add(location_label)
-    location_label.loc_trigger = trigger
-    location_label.long = long
-    location_label.lat = lat
-    location_label.name = address
-    location_label.radius = radius
+    elif place_of(location_label) != new_place:
+        try:
+            sweep_reminders(user.oauth_token, place_of(location_label), new_place)
+        except requests.exceptions.RequestException as e:
+            app.logger.error(
+                "Could not move reminders, mapping %s unchanged: %s", location_label.id, e
+            )
+            return abort(502)
+    (
+        location_label.name,
+        location_label.lat,
+        location_label.long,
+        location_label.loc_trigger,
+        location_label.radius,
+    ) = new_place
     db.session.commit()
     return redirect(url_for("index"))
 
@@ -427,64 +505,40 @@ def webhook():
         ll for ll in user_location_labels if str(ll.label_id) not in task_label_id_strs
     ]
 
-    # Delete reminders for removed labels
-    for reminder in item_reminders:
-        for ll in not_used_location_labels:
-            if (
-                reminder.get("name") == ll.name
-                and reminder.get("loc_trigger") == ll.loc_trigger
-                and reminder.get("radius") == ll.radius
-            ):
-                app.logger.info("Deleting reminder %s (label removed)", reminder["id"])
-                try:
+    # A failed add or delete answers 503 as well: reporting the event as handled
+    # would leave the task wrong with nothing to retry it.
+    try:
+        # Delete reminders for removed labels
+        for reminder in item_reminders:
+            for ll in not_used_location_labels:
+                if reminder_is_at(reminder, place_of(ll)):
+                    app.logger.info("Deleting reminder %s (label removed)", reminder["id"])
                     todoist_delete_reminder(token, reminder["id"])
-                except Exception as e:
-                    app.logger.error("Failed to delete reminder %s: %s", reminder["id"], e)
-                break
+                    break
 
-    # Add reminders for matching labels
-    for label_id in task_label_ids:
-        loc_labels = user.location_labels.filter_by(label_id=label_id).all()
-        if not loc_labels:
-            app.logger.info("No location config for label %s, skip", label_id)
-            continue
-        for loc_label in loc_labels:
-            # Check for existing duplicate
-            existing = [
-                r
-                for r in item_reminders
-                if (
-                    r.get("name") == loc_label.name
-                    and r.get("loc_trigger") == loc_label.loc_trigger
-                    and r.get("radius") == loc_label.radius
-                )
-            ]
-            if existing:
+        # Add reminders for matching labels
+        for label_id in task_label_ids:
+            loc_label = user.location_labels.filter_by(label_id=label_id).first()
+            if loc_label is None:
+                app.logger.info("No location config for label %s, skip", label_id)
+                continue
+            if any(reminder_is_at(r, place_of(loc_label)) for r in item_reminders):
                 app.logger.info(
-                    "Reminder already exists for item %s / location %s",
+                    "Reminder already exists for item %s / mapping %s",
                     event_data["id"],
-                    loc_label.name,
+                    loc_label.id,
                 )
                 continue
-
             app.logger.info(
-                "Adding location reminder: item=%s, location=%s, trigger=%s",
+                "Adding location reminder: item=%s, mapping=%s, trigger=%s",
                 event_data["id"],
-                loc_label.name,
+                loc_label.id,
                 loc_label.loc_trigger,
             )
-            try:
-                todoist_add_reminder(
-                    token,
-                    event_data["id"],
-                    loc_label.name,
-                    loc_label.lat,
-                    loc_label.long,
-                    loc_label.loc_trigger,
-                    loc_label.radius,
-                )
-            except Exception as e:
-                app.logger.error("Failed to add reminder for item %s: %s", event_data["id"], e)
+            todoist_add_reminder(token, event_data["id"], *place_of(loc_label))
+    except requests.exceptions.RequestException as e:
+        app.logger.error("Todoist write failed, asking for redelivery: %s", e)
+        return "todoist api error", 503
 
     return "ok"
 
