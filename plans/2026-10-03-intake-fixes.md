@@ -390,11 +390,13 @@ If every `id` is all digits, proceed. If any `id` is not numeric (base32 letters
 - Everyone is logged out once at deploy. Say so in the PR body.
 
 ### Success Criteria
-- [ ] Gate output recorded in the PR body (all numeric, or STOP)
-- [ ] `grep -c flask-session uv.lock` prints 0
-- [ ] `make check` green; merged; deploy green
-- [ ] After the migration: `\d location_label` in psql shows `uq_location_label_user_label`
-- [ ] End-to-end steps 1 to 5; log in once more after the cookie change; re-submit an existing label with a new address and see one entry with the new address
+- [x] Gate output recorded in the PR body (all numeric, or STOP)
+- [x] `grep -c flask-session uv.lock` prints 0
+- [x] `make check` green; merged; deploy green
+- [x] After the migration: `\d location_label` in psql shows `uq_location_label_user_label`
+- [x] End-to-end steps 1 to 5; log in once more after the cookie change; re-submit an existing label with a new address and see one entry with the new address
+
+**Phase 5 result (2026-10-05 UTC):** B8 gate passed (`test_label` has ID `2185479912`, numeric). `ALTER TABLE` run on `todoist_location_labels` on Dan's go: 12 rows before and after, 0 duplicates, constraint read back from `pg_constraint`. PR #37 merged as 40fab8a, release v77. Live session cookie carries `Secure; HttpOnly; SameSite=Lax`. Dan confirmed login, resubmit-to-edit and tag/untag. Not yet observed: a login surviving a day.
 
 ---
 
@@ -403,6 +405,8 @@ If every `id` is all digits, proceed. If any `id` is not numeric (base32 letters
 - Run `/repo-intake` again. Expected: 0 tier 1, 0 tier 2, in the fold; the rerun scopes `improve` to `git diff 27e2c80..HEAD`.
 - Tick the boxes above; link each PR next to its phase.
 - Store the AutoMem pointer: repo, date, verdict, PR list.
+
+**Phase 6 result:** second intake written to `plans/intake-2026-10-04.md` at 40fab8a. Verdict: not yet in the fold, by two lines (2.12: a backoff documented as 1, 2, 4 s that measures 0, 2, 4 s; 2.26: one test-only line at `app.py:109`). 0 tier 1. Four new bugs, C1 to C4; C2 and C3 were introduced by this plan. C1 (editing or deleting a mapping orphans its reminders) corrects a statement made during this plan's interview. This plan is complete; the follow-up is the report's fix order.
 
 ## Rollback
 
