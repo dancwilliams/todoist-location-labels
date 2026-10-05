@@ -1,5 +1,6 @@
 import pytest
 import requests
+from requests.adapters import HTTPAdapter
 
 import app as app_module
 
@@ -30,6 +31,26 @@ def test_a_stalled_todoist_is_not_retried(fake_todoist, monkeypatch, call):
         else:
             app_module.todoist_delete_reminder("tok", "r1")
     assert fake_todoist["hits"] == 1
+
+
+def test_a_stalled_connect_is_not_retried(monkeypatch):
+    """D3: a connect that times out costs one attempt, like a stalled read."""
+    attempts = []
+
+    def stalled(address, *args, **kwargs):
+        attempts.append(address)
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr("urllib3.util.connection.create_connection", stalled)
+    policy = app_module.todoist_http.get_adapter("https://api.todoist.com").max_retries
+    monkeypatch.setitem(
+        app_module.todoist_http.adapters,
+        "https://",
+        HTTPAdapter(max_retries=policy.new(backoff_factor=0)),
+    )
+    with pytest.raises(requests.exceptions.RequestException):
+        app_module.todoist_api_get("labels", "tok")
+    assert len(attempts) == 1
 
 
 def test_labels_follow_next_cursor(monkeypatch):

@@ -97,6 +97,12 @@ SYNC_BATCH = 100  # Todoist accepts at most 100 commands per sync request
 # larger radius is stored as 255, a longer name or a fractional radius is refused.
 MAX_RADIUS = 255  # meters
 MAX_NAME = 255  # characters
+# Said with a 502. A sweep that stopped part-way is finished by submitting again;
+# a reminder whose re-add was refused is re-created by the webhook.
+SWEEP_FAILED = (
+    "Todoist did not accept every change. Submit the same change again. "
+    "If a task's reminder is missing, it comes back the next time that task changes."
+)
 
 # One session for every outbound call. A 429 or 5xx answer is retried three
 # times, after waits of 0, 2 and 4 s (measured: urllib3 does not wait before
@@ -110,6 +116,7 @@ todoist_http.mount(
     HTTPAdapter(
         max_retries=Retry(
             total=3,
+            connect=0,  # nor is a stall while connecting
             read=0,  # a stall is not retried: 4 x 10 s would outlast gunicorn's 30 s worker timeout
             backoff_factor=1,
             status_forcelist=(429, 500, 502, 503, 504),
@@ -221,14 +228,17 @@ def reminder_delete_command(reminder_id):
 
 
 def todoist_run_commands(token, commands, what):
-    """Send sync commands, at most SYNC_BATCH per request, and log any Todoist refused."""
+    """Send sync commands, at most SYNC_BATCH per request. Raises if Todoist refuses any."""
     for start in range(0, len(commands), SYNC_BATCH):
-        result = todoist_sync(token, commands=commands[start : start + SYNC_BATCH])
-        sync_status = result.get("sync_status", {})
+        batch = commands[start : start + SYNC_BATCH]
+        sync_status = todoist_sync(token, commands=batch).get("sync_status", {})
         app.logger.info("%s sync result: %s", what, sync_status)
-        for k, v in sync_status.items():
-            if v != "ok":
-                app.logger.error("%s failed: %s -> %s", what, k, v)
+        # Todoist answers HTTP 200 and reports a refused command here. A command
+        # with no status at all counts as refused too.
+        refused = {c["uuid"]: sync_status.get(c["uuid"]) for c in batch}
+        refused = {k: v for k, v in refused.items() if v != "ok"}
+        if refused:
+            raise requests.exceptions.RequestException(f"{what} refused: {refused}")
 
 
 def todoist_add_reminder(token, item_id, name, loc_lat, loc_long, loc_trigger, radius):
@@ -400,7 +410,7 @@ def delete_label_location(location_label_id):
         sweep_reminders(user.oauth_token, place_of(location_label))
     except requests.exceptions.RequestException as e:
         app.logger.error("Could not remove reminders, mapping %s kept: %s", location_label.id, e)
-        return abort(502)
+        return abort(502, description=SWEEP_FAILED)
 
     db.session.delete(location_label)
     db.session.commit()
@@ -440,7 +450,7 @@ def create_label_location():
             app.logger.error(
                 "Could not move reminders, mapping %s unchanged: %s", location_label.id, e
             )
-            return abort(502)
+            return abort(502, description=SWEEP_FAILED)
     (
         location_label.name,
         location_label.lat,
@@ -463,7 +473,6 @@ def webhook():
     event = request.json
     if event["event_name"] not in ["item:added", "item:updated"]:
         return ""
-    initiator = event["initiator"]
     event_data = event["event_data"]
     app.logger.info(
         "Received webhook event %s for item %s, labels: %s",
@@ -471,9 +480,11 @@ def webhook():
         event_data["id"],
         event_data.get("labels", []),
     )
-    user = db.session.get(User, int(initiator["id"]))
+    # user_id is who the event was delivered for; the initiator may be a
+    # collaborator in a shared project who is not a user of this app.
+    user = db.session.get(User, int(event["user_id"]))
     if user is None:
-        app.logger.warning("No user found for initiator %s", initiator["id"])
+        app.logger.warning("No user found for user_id %s", event["user_id"])
         return ""
 
     token = user.oauth_token
@@ -513,7 +524,7 @@ def webhook():
     app.logger.info("Existing location reminders for item: %d", len(item_reminders))
 
     # Find user's location-label configs
-    user_location_labels = LocationLabel.query.filter_by(user_id=initiator["id"]).all()
+    user_location_labels = LocationLabel.query.filter_by(user_id=user.id).all()
 
     # Determine which location labels are NOT on this task (for deletion)
     task_label_id_strs = [str(lid) for lid in task_label_ids]
