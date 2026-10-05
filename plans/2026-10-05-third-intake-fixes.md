@@ -130,10 +130,10 @@ select least(greatest(floor('NaN'::float8), 1), 255),
 - `same_place_pairs` non-zero: D2 is live for those labels today, and PR C's rule only stops new ones. List the pairs (`select a.label_id, b.label_id` over the same join) for Dan; changing one of the two radii by a metre separates them. Do it before PR C merges.
 
 ### Success Criteria
-- [ ] 0a: three `sweep matched 1 of N` lines read from the Fly log, timestamps recorded here
+- [x] 0a: PASSED on v80, 2026-10-05 (Fly log, UTC, mapping row 19): 23:42:13 `reminder_add sync result` ok; 23:42:45 edit to 255, `sweep matched 1 of 1 location reminders`, two ok; 23:43:33 edit back to 100, `sweep matched 1 of 1`, two ok; 23:43:58 delete, `sweep matched 1 of 1`, one ok. No error, refused or redelivery line.
 - [ ] 0b: the result rows recorded here; update run or not needed; pairs separated or none
 
-Status when PR A was opened (2026-10-05 23:01Z): neither gate is done. `fly logs --no-tail` reached back only to 22:20Z and held no `sweep matched` line, so 0a cannot be read from here until Dan runs the test again or says when he ran it. The 0b script was run against a local Postgres 17 seeded with one row of each kind and printed the expected counts; it has not been run against production.
+Status: 0a done (above). The 0b script was run against a local Postgres 17 seeded with one row of each kind and printed the expected counts; it has not been run against production.
 
 ---
 
