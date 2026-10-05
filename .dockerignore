@@ -1,7 +1,7 @@
 fly.toml
 .venv
 .git
-todoist-python
+tests
 plans
 __pycache__
 *.pyc

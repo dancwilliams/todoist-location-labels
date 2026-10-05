@@ -24,7 +24,6 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-todoist/
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
@@ -103,6 +102,5 @@ ENV/
 .mypy_cache/
 
 # Flask session files
-flask_session/
 
 .vscode/

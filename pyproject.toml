@@ -20,9 +20,6 @@ dev = [
     "types-requests",
 ]
 
-[tool.uv]
-prerelease = "allow"
-
 [tool.ruff]
 line-length = 100
 target-version = "py313"
@@ -36,6 +33,7 @@ quote-style = "double"
 [tool.mypy]
 python_version = "3.13"
 warn_return_any = true
+check_untyped_defs = true
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

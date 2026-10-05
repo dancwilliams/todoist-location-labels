@@ -15,7 +15,7 @@ def _other_users_mapping():
     return row.id
 
 
-def test_delete_own_mapping(client, login):
+def test_delete_own_mapping(client, login, fake_todoist):
     r = client.post(f"/delete_label_location/{_mapping_id()}")
     assert r.status_code == 302
     assert app_module.LocationLabel.query.count() == 0
@@ -67,8 +67,9 @@ def _form(**over):
     return form
 
 
-def test_create_mapping(client, login):
+def test_create_mapping(client, login, fake_todoist):
     assert client.post("/create_label_location", data=_form()).status_code == 302
+    assert fake_todoist["hits"] == 0  # a new mapping has no reminders to move
     row = app_module.LocationLabel.query.filter_by(label_id=30).one()
     assert (row.name, row.lat, row.long, row.radius, row.loc_trigger) == (
         "1 Main St",
@@ -99,7 +100,7 @@ def test_index_renders_delete_as_post_form(client, login, monkeypatch):
     assert 'method="post"' in page
 
 
-def test_resubmitting_a_label_updates_it(client, login):
+def test_resubmitting_a_label_updates_it(client, login, fake_todoist):
     """B2: a second submit for the same label edits the mapping instead of hiding a duplicate."""
     client.post("/create_label_location", data=_form())
     r = client.post(
@@ -163,3 +164,80 @@ def test_login_sets_a_30_day_secure_cookie(client, monkeypatch):
     assert attrs["samesite"] == "Lax"
     lifetime = parsedate_to_datetime(attrs["expires"]) - datetime.now(UTC)
     assert timedelta(days=29) < lifetime <= timedelta(days=30)
+
+
+HOME_REMINDER = {
+    "id": "r1",
+    "type": "location",
+    "item_id": "900",
+    "name": "Home",
+    "loc_trigger": "on_enter",
+    "radius": 100.0,
+}
+OTHER_REMINDER = dict(HOME_REMINDER, id="r2", item_id="901", name="Somewhere else")
+
+
+def _sent(fake_todoist):
+    return [(c["type"], c["args"]) for c in fake_todoist["commands"]]
+
+
+def test_editing_a_mapping_moves_its_reminders(client, login, fake_todoist):
+    """C1: the reminder a mapping created follows the mapping to its new address."""
+    fake_todoist["reminders"] = [HOME_REMINDER, OTHER_REMINDER]
+    r = client.post(
+        "/create_label_location",
+        data=_form(
+            label_id="10",
+            address="2 Oak Ave",
+            lat="9.5",
+            long="8.5",
+            radius="250",
+            trigger="on_leave",
+        ),
+    )
+    assert r.status_code == 302
+    assert _sent(fake_todoist) == [
+        ("reminder_delete", {"id": "r1"}),
+        (
+            "reminder_add",
+            {
+                "item_id": "900",
+                "type": "location",
+                "name": "2 Oak Ave",
+                "loc_lat": "9.5",
+                "loc_long": "8.5",
+                "loc_trigger": "on_leave",
+                "radius": 250.0,
+            },
+        ),
+    ]
+    assert app_module.LocationLabel.query.filter_by(label_id=10).one().name == "2 Oak Ave"
+
+
+def test_resubmitting_unchanged_values_touches_nothing(client, login, fake_todoist):
+    fake_todoist["reminders"] = [HOME_REMINDER]
+    r = client.post(
+        "/create_label_location",
+        data=_form(
+            label_id="10", address="Home", lat="1.0", long="2.0", radius="100", trigger="on_enter"
+        ),
+    )
+    assert r.status_code == 302
+    assert fake_todoist["hits"] == 0
+
+
+def test_deleting_a_mapping_removes_its_reminders(client, login, fake_todoist):
+    """C1: deleting a mapping takes the reminders it created with it."""
+    fake_todoist["reminders"] = [HOME_REMINDER, OTHER_REMINDER]
+    assert client.post(f"/delete_label_location/{_mapping_id()}").status_code == 302
+    assert _sent(fake_todoist) == [("reminder_delete", {"id": "r1"})]
+    assert app_module.LocationLabel.query.count() == 0
+
+
+def test_mapping_is_unchanged_when_todoist_is_down(client, login, fake_todoist):
+    """If the reminders cannot be moved, the mapping stays as it was and the user is told."""
+    fake_todoist["status"] = 503
+    edit = client.post("/create_label_location", data=_form(label_id="10", address="2 Oak Ave"))
+    delete = client.post(f"/delete_label_location/{_mapping_id()}")
+    assert (edit.status_code, delete.status_code) == (502, 502)
+    assert app_module.LocationLabel.query.filter_by(label_id=10).one().name == "Home"
