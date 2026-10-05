@@ -131,9 +131,9 @@ select least(greatest(floor('NaN'::float8), 1), 255),
 
 ### Success Criteria
 - [x] 0a: PASSED on v80, 2026-10-05 (Fly log, UTC, mapping row 19): 23:42:13 `reminder_add sync result` ok; 23:42:45 edit to 255, `sweep matched 1 of 1 location reminders`, two ok; 23:43:33 edit back to 100, `sweep matched 1 of 1`, two ok; 23:43:58 delete, `sweep matched 1 of 1`, one ok. No error, refused or redelivery line.
-- [ ] 0b: the result rows recorded here; update run or not needed; pairs separated or none
+- [x] 0b: DONE 2026-10-05. Before: total 12, over_255 1, under_1 0, fractional 0, long_name 0, padded_name 0, bad_coords 0; same_place_pairs 0; the third query printed 255, 255, 1. Update run by Dan: `UPDATE 1`; after: total 12, every other count 0. D8 and D9 closed in the data; no pairs to separate; no coordinates to re-enter.
 
-Status: 0a done (above). The 0b script was run against a local Postgres 17 seeded with one row of each kind and printed the expected counts; it has not been run against production.
+Connection note: the proven form of the psql command is `fly ssh console -a dcw-postgres-dev -C "sh -c 'PGPASSWORD=\$OPERATOR_PASSWORD psql -h \$FLY_PRIVATE_IP -p 5433 -U postgres -d todoist_location_labels -c \"<sql>\"'"` (the socket and localhost both refuse; the SQL must carry no quote and no `$`, so NaN is `(chr(78)||chr(97)||chr(78))::float8`).
 
 ---
 
