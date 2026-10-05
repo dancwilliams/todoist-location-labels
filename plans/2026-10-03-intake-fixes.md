@@ -347,15 +347,19 @@ One PR. Each item carries one test that fails first.
   Use `_http.get/post` in `todoist_api_get`, `todoist_sync` and the OAuth exchange. POST retry is safe: every sync command carries a `uuid` and Todoist deduplicates on it. Delete `tenacity` from pyproject, the four imports (`:23-28`), `log_retry_attempt`/`log_retry_error` (`:102-107`) and the decorator (`:117-123`). Test: a mocked adapter answering 401 → exactly one request (today: three).
 
 ### Success Criteria
-- [ ] `grep -c tenacity uv.lock` prints 0
-- [ ] `make check` green; each new test's pre-fix failing run pasted in the PR body; merged; deploy green
-- [ ] End-to-end steps 1 to 5, plus: delete a mapping from the UI and confirm it is gone after reload
+- [x] `grep -c tenacity uv.lock` prints 0
+- [x] `make check` green; each new test's pre-fix failing run pasted in the PR body; merged; deploy green
+- [x] End-to-end steps 1 to 5, plus: delete a mapping from the UI and confirm it is gone after reload
+
+**Phase 4 result (2026-10-05):** PR #36 merged as 1f9b30a, release v76. Live probes: GET delete 405, POST delete unauthenticated 401, cold OAuth callback 401, logout 302. Dan deleted and re-added a mapping from the page and tagged a task; all worked. 25 tests, 73% coverage.
 
 ---
 
 ## Phase 5: Data model and sessions (B2, B8 gate, Flask-Session removal)
 
 ### Gate first: label ID format (B8)
+
+**Read on 2026-10-05 (permission rule added to `.claude/settings.local.json` at Dan's request):** the live database is `todoist_location_labels` on `dcw-postgres-dev` (it holds the label tested that day, shows inserts and deletes, and has the app's connection; `dcw_todoist_location` has had no writes since its 2025-02 stats reset). Live counts: 12 mappings, 1 user, 0 duplicate `(user_id, label_id)` pairs, `label_id` is `bigint`, longest value 10 digits. So the dedupe DELETE below is a no-op and only the ALTER runs. The format of a newly created label's ID is still open: Dan created `test_label`, and its ID will show in the webhook log once it is put on a task.
 
 Before this phase Dan adds a permission rule allowing `fly ssh console` and `fly postgres connect` for this repo (settings skill). Then the agent runs, with Dan's personal Todoist API token exported in Dan's shell as `TODOIST_TOKEN` (Settings → Integrations → Developer; the agent never sees the value):
 ```

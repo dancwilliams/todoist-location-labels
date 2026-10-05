@@ -97,3 +97,69 @@ def test_index_renders_delete_as_post_form(client, login, monkeypatch):
     assert "Logout Test User" in page
     assert f'action="/delete_label_location/{_mapping_id()}"' in page
     assert 'method="post"' in page
+
+
+def test_resubmitting_a_label_updates_it(client, login):
+    """B2: a second submit for the same label edits the mapping instead of hiding a duplicate."""
+    client.post("/create_label_location", data=_form())
+    r = client.post(
+        "/create_label_location",
+        data=_form(address="2 Oak Ave", lat="9.5", long="8.5", radius="250", trigger="on_leave"),
+    )
+    assert r.status_code == 302
+    row = app_module.LocationLabel.query.filter_by(label_id=30).one()
+    assert (row.name, row.lat, row.long, row.radius, row.loc_trigger) == (
+        "2 Oak Ave",
+        9.5,
+        8.5,
+        250.0,
+        "on_leave",
+    )
+
+
+def test_database_refuses_duplicate_mapping(client, login):
+    """B2: the constraint, not just the route, keeps one mapping per user and label."""
+    import pytest
+    from sqlalchemy.exc import IntegrityError
+
+    dup = app_module.LocationLabel(
+        user_id=login.id,
+        label_id=10,
+        name="Again",
+        lat=0.0,
+        long=0.0,
+        loc_trigger="on_enter",
+        radius=1.0,
+    )
+    app_module.db.session.add(dup)
+    with pytest.raises(IntegrityError):
+        app_module.db.session.commit()
+    app_module.db.session.rollback()
+
+
+def test_login_sets_a_30_day_secure_cookie(client, monkeypatch):
+    """The session lives in a signed cookie: Secure, Lax, and good for 30 days."""
+    from datetime import UTC, datetime, timedelta
+    from email.utils import parsedate_to_datetime
+
+    class TokenResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"access_token": "tok"}
+
+    monkeypatch.setattr(app_module.todoist_http, "post", lambda *a, **k: TokenResponse())
+    monkeypatch.setattr(app_module, "todoist_get_user", lambda token: {"id": 5})
+    with client.session_transaction() as sess:
+        sess["oauth_secret_state"] = "s"
+    r = client.get("/oauth/redirect?state=s&code=c")
+    assert r.status_code == 302
+    cookie = next(h for h in r.headers.getlist("Set-Cookie") if h.startswith("session="))
+    attrs = {
+        p.strip().split("=")[0].lower(): p.strip().partition("=")[2] for p in cookie.split(";")[1:]
+    }
+    assert "secure" in attrs and "httponly" in attrs
+    assert attrs["samesite"] == "Lax"
+    lifetime = parsedate_to_datetime(attrs["expires"]) - datetime.now(UTC)
+    assert timedelta(days=29) < lifetime <= timedelta(days=30)
