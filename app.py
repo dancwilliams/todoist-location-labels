@@ -93,6 +93,10 @@ TODOIST_API_BASE = "https://api.todoist.com/api/v1"
 
 TODOIST_TIMEOUT = 10  # seconds, per request
 SYNC_BATCH = 100  # Todoist accepts at most 100 commands per sync request
+# A location reminder's limits, read back from the live API on 2026-10-05: a
+# larger radius is stored as 255, a longer name or a fractional radius is refused.
+MAX_RADIUS = 255  # meters
+MAX_NAME = 255  # characters
 
 # One session for every outbound call. A 429 or 5xx answer is retried three
 # times, after waits of 0, 2 and 4 s (measured: urllib3 does not wait before
@@ -239,13 +243,18 @@ def todoist_delete_reminder(token, reminder_id):
 
 
 def place_of(location_label):
-    """What a reminder is built from: (name, lat, long, trigger, radius)."""
+    """What a reminder is built from: (name, lat, long, trigger, radius), as Todoist stores it.
+
+    Todoist strips the name and stores any radius over MAX_RADIUS as MAX_RADIUS,
+    answering "ok" either way. The form refuses such values now; a row saved
+    before it did is normalised here, or it would never match its own reminders.
+    """
     return (
-        location_label.name,
+        location_label.name.strip(),
         location_label.lat,
         location_label.long,
         location_label.loc_trigger,
-        location_label.radius,
+        min(int(location_label.radius), MAX_RADIUS),
     )
 
 
@@ -273,11 +282,14 @@ def sweep_reminders(token, old_place, new_place=None):
     RequestException on API failure, before or between batches.
     """
     commands = []
-    for reminder in todoist_get_reminders(token):
-        if reminder_is_at(reminder, old_place):
-            commands.append(reminder_delete_command(reminder["id"]))
-            if new_place is not None:
-                commands.append(reminder_add_command(reminder["item_id"], *new_place))
+    located = [r for r in todoist_get_reminders(token) if r.get("type") == "location"]
+    matched = [r for r in located if reminder_is_at(r, old_place)]
+    # Zero of many is how a reminder that no longer matches its mapping shows up.
+    app.logger.info("sweep matched %d of %d location reminders", len(matched), len(located))
+    for reminder in matched:
+        commands.append(reminder_delete_command(reminder["id"]))
+        if new_place is not None:
+            commands.append(reminder_add_command(reminder["item_id"], *new_place))
     todoist_run_commands(token, commands, "sweep")
 
 
@@ -400,15 +412,19 @@ def create_label_location():
     log_request("/create_label_location")
     user = get_current_user()
     trigger = request.form["trigger"]
-    address = request.form["address"]
+    address = request.form["address"].strip()
     try:
         label_id = int(request.form["label_id"])
         lat = float(request.form["lat"])
         long = float(request.form["long"])
-        radius = float(request.form.get("radius", 300))
+        radius = int(request.form["radius"])
     except ValueError:
         return abort(400)  # e.g. an address typed without picking a suggestion: no lat/long
     if trigger not in ("on_enter", "on_leave"):
+        return abort(400)
+    # Only what Todoist stores unchanged is accepted, so a mapping always equals
+    # the reminders made from it.
+    if not (1 <= radius <= MAX_RADIUS and 1 <= len(address) <= MAX_NAME):
         return abort(400)
     # Submitting a label that is already mapped edits that mapping, and moves
     # the reminders it has already created to the new place.

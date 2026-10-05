@@ -191,18 +191,21 @@
                                 name="address"
                                 placeholder="Enter your address"
                                 type="text"
+                                maxlength="255"
                                 required
                             />
                         </div>
                     </div>
                     <div class="form-group row">
-                            <label for="radius" class="col-sm-3 col-form-label">Radius (meters)</label>
+                            <label for="radius" class="col-sm-3 col-form-label">Radius (meters, 1 to 255)</label>
                             <div class="col-sm-9">
                                 <input
                                     class="form-control"
                                     id="radius"
                                     name="radius"
-                                    type="text"
+                                    type="number"
+                                    min="1"
+                                    max="255"
                                     value="100"
                                     required
                                 />

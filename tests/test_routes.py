@@ -68,7 +68,9 @@ def _form(**over):
 
 
 def test_create_mapping(client, login, fake_todoist):
-    assert client.post("/create_label_location", data=_form()).status_code == 302
+    # Todoist strips the name, so the mapping is stored stripped.
+    r = client.post("/create_label_location", data=_form(address=" 1 Main St "))
+    assert r.status_code == 302
     assert fake_todoist["hits"] == 0  # a new mapping has no reminders to move
     row = app_module.LocationLabel.query.filter_by(label_id=30).one()
     assert (row.name, row.lat, row.long, row.radius, row.loc_trigger) == (
@@ -80,10 +82,14 @@ def test_create_mapping(client, login, fake_todoist):
     )
 
 
-def test_create_rejects_bad_numbers_and_trigger(client, login):
+def test_create_rejects_bad_input(client, login):
     assert client.post("/create_label_location", data=_form(radius="abc")).status_code == 400
     assert client.post("/create_label_location", data=_form(lat="")).status_code == 400
     assert client.post("/create_label_location", data=_form(trigger="sideways")).status_code == 400
+    # Values Todoist refuses or silently changes (read back 2026-10-05): a radius
+    # over 255 comes back as 255, a fractional one or a 256-character name is refused.
+    for bad in ({"radius": "256"}, {"radius": "0"}, {"radius": "100.5"}, {"address": "x" * 256}):
+        assert client.post("/create_label_location", data=_form(**bad)).status_code == 400, bad
     assert app_module.LocationLabel.query.filter_by(label_id=30).count() == 0
 
 
@@ -226,12 +232,26 @@ def test_resubmitting_unchanged_values_touches_nothing(client, login, fake_todoi
     assert fake_todoist["hits"] == 0
 
 
-def test_deleting_a_mapping_removes_its_reminders(client, login, fake_todoist):
+def test_deleting_a_mapping_removes_its_reminders(client, login, fake_todoist, caplog):
     """C1: deleting a mapping takes the reminders it created with it."""
     fake_todoist["reminders"] = [HOME_REMINDER, OTHER_REMINDER]
     assert client.post(f"/delete_label_location/{_mapping_id()}").status_code == 302
     assert _sent(fake_todoist) == [("reminder_delete", {"id": "r1"})]
+    assert "sweep matched 1 of 2 location reminders" in caplog.text
     assert app_module.LocationLabel.query.count() == 0
+
+
+def test_a_mapping_todoist_stored_differently_still_finds_its_reminders(
+    client, login, fake_todoist
+):
+    """A row saved before the form refused such values: Todoist stored the radius as
+    255 and the name stripped (read back 2026-10-05), and said "ok"."""
+    row = app_module.LocationLabel.query.filter_by(label_id=10).one()
+    row.name, row.radius = " Home ", 300.0
+    app_module.db.session.commit()
+    fake_todoist["reminders"] = [dict(HOME_REMINDER, radius=255)]
+    assert client.post(f"/delete_label_location/{row.id}").status_code == 302
+    assert _sent(fake_todoist) == [("reminder_delete", {"id": "r1"})]
 
 
 def test_mapping_is_unchanged_when_todoist_is_down(client, login, fake_todoist):
