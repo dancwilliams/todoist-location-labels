@@ -10,7 +10,6 @@ dependencies = [
     "Flask",
     "Flask-SQLAlchemy",
     "Flask-Session",
-    "tenacity",
 ]
 
 [dependency-groups]

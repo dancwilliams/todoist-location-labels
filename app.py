@@ -20,12 +20,8 @@ from flask import (
 )
 from flask_session import Session  # type: ignore[attr-defined]
 from flask_sqlalchemy import SQLAlchemy
-from tenacity import (
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_fixed,
-)
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 app = Flask(__name__)
 
@@ -75,7 +71,7 @@ def get_current_user():
     user_id = session.get("user_id")
     if user_id is None:
         abort(401)
-    user = User.query.get(user_id)
+    user = db.session.get(User, user_id)
     if user is None:
         abort(401)
     return user
@@ -88,15 +84,24 @@ def log_request(route):
     app.logger.info("Request made to %s: IP %s", route, ip)
 
 
-def log_retry_attempt(retry_state):
-    app.logger.warning(f"Retrying API Call: Attempt {retry_state.attempt_number}")
-
-
-def log_retry_error(retry_state):
-    app.logger.error(f"Retry failed: {retry_state.outcome.exception()}")
-
-
 TODOIST_API_BASE = "https://api.todoist.com/api/v1"
+
+# One session for every outbound call. 429 and 5xx are retried three times
+# (1, 2, 4 s), GET and POST alike: sync commands carry a uuid Todoist dedupes
+# on, so a retried POST cannot apply twice. Anything else, a 401 included,
+# fails at once. Retry-After is ignored so a rate limit cannot hold a worker
+# for minutes; the webhook answers 503 and Todoist redelivers instead.
+todoist_http = requests.Session()
+_retry = Retry(
+    total=3,
+    backoff_factor=1,
+    status_forcelist=(429, 500, 502, 503, 504),
+    allowed_methods=("GET", "POST"),
+    respect_retry_after_header=False,
+    raise_on_status=False,
+)
+todoist_http.mount("https://", HTTPAdapter(max_retries=_retry))
+todoist_http.mount("http://", HTTPAdapter(max_retries=_retry))
 
 
 def todoist_headers(token):
@@ -111,17 +116,10 @@ def webhook_signature_ok(raw_body: bytes, header: str | None) -> bool:
     return header is not None and hmac.compare_digest(expected, header)
 
 
-@retry(
-    retry=retry_if_exception_type(requests.exceptions.HTTPError),
-    stop=stop_after_attempt(3),
-    wait=wait_fixed(2),
-    before=log_retry_attempt,
-    after=log_retry_error,
-)
-def todoist_api_get(endpoint, token):
+def todoist_api_get(endpoint, token, params=None):
     """GET from Todoist API v1."""
     url = f"{TODOIST_API_BASE}/{endpoint}"
-    response = requests.get(url, headers=todoist_headers(token), timeout=10)
+    response = todoist_http.get(url, headers=todoist_headers(token), params=params, timeout=10)
     if not response.ok:
         app.logger.error(
             "Todoist API GET %s failed: %s %s body=%s",
@@ -136,9 +134,16 @@ def todoist_api_get(endpoint, token):
 
 def todoist_get_labels(token):
     """Fetch all labels for a user. Raises RequestException on API failure."""
-    # API v1 returns a paginated dict: {"results": [...]}. Anything else raises,
-    # so a malformed response is never mistaken for "no labels".
-    labels = todoist_api_get("labels", token)["results"]
+    # API v1 returns pages: {"results": [...], "next_cursor": ...}. Every page is
+    # read, and anything else raises, so neither a malformed response nor a
+    # second page is ever mistaken for "label not on this account".
+    labels, cursor = [], None
+    while True:
+        page = todoist_api_get("labels", token, {"cursor": cursor} if cursor else None)
+        labels.extend(page["results"])
+        cursor = page.get("next_cursor")
+        if not cursor:
+            break
     app.logger.info("Fetched %d labels", len(labels))
     return labels
 
@@ -146,7 +151,7 @@ def todoist_get_labels(token):
 def todoist_get_user(token):
     """Fetch user profile info. Raises RequestException on API failure."""
     result = todoist_api_get("user", token)
-    app.logger.info("User API returned: %s", str(result)[:200])
+    app.logger.info("Fetched user %s", result.get("id"))
     return result
 
 
@@ -158,7 +163,7 @@ def todoist_sync(token, resource_types=None, commands=None):
         "resource_types": json.dumps(resource_types or ["all"]),
         "commands": json.dumps(commands or []),
     }
-    response = requests.post(url, headers=todoist_headers(token), data=data, timeout=15)
+    response = todoist_http.post(url, headers=todoist_headers(token), data=data, timeout=15)
     response.raise_for_status()
     return response.json()
 
@@ -215,9 +220,11 @@ def index():
         "google_map_api_key": google_map_api_key,
         "google_analytics_id": google_analytics_id,
     }
-    if user_id is not None:
-        user = User.query.get(user_id)
-        app.logger.info(f"user_id: {user_id}")
+    user = db.session.get(User, user_id) if user_id is not None else None
+    if user_id is not None and user is None:
+        session.pop("user_id", None)  # stale session: the user row is gone
+    if user is not None:
+        app.logger.info("user_id: %s", user_id)
         try:
             labels = todoist_get_labels(user.oauth_token)
             user_info = todoist_get_user(user.oauth_token)
@@ -254,14 +261,14 @@ def authorize():
 @app.route("/oauth/redirect")
 def oauth_redirect():
     log_request("/oauth/redirect")
-    state = session["oauth_secret_state"]
-    if request.args.get("state") != state:
+    state = session.get("oauth_secret_state")
+    if not state or request.args.get("state") != state:
         return abort(401)
     code = request.args.get("code")
     if not code:
         return abort(400)
     try:
-        resp = requests.post(
+        resp = todoist_http.post(
             "https://api.todoist.com/oauth/access_token",
             data=dict(
                 client_id=client_id,
@@ -269,14 +276,12 @@ def oauth_redirect():
                 code=code,
                 redirect_uri=url_for("authorize", _external=True),
             ),
+            timeout=10,
         )
         resp.raise_for_status()
-    except requests.exceptions.HTTPError as err:
-        app.logger.error(f"HTTP Error occurred: {err}")
-        app.logger.error(f"Response status: {resp.status_code}")
-        app.logger.error(f"Response headers: {resp.headers}")
-        app.logger.error(f"Response body: {resp.text}")
-        return abort(500)
+    except requests.exceptions.RequestException as err:
+        app.logger.error("OAuth token exchange failed: %s", err)
+        return abort(502)
     access_token = resp.json()["access_token"]
     try:
         user_info = todoist_get_user(access_token)
@@ -287,7 +292,7 @@ def oauth_redirect():
         app.logger.error("Failed to fetch user info after OAuth")
         return abort(500)
     user_id = user_info["id"]
-    user = User.query.get(user_id)
+    user = db.session.get(User, user_id)
     if user is None:
         user = User(id=user_id, oauth_token=access_token)
         db.session.add(user)
@@ -301,21 +306,19 @@ def oauth_redirect():
 @app.route("/logout")
 def logout():
     log_request("/logout")
-    del session["user_id"]
+    session.pop("user_id", None)
     return redirect(url_for("index"))
 
 
-@app.route("/delete_label_location/<int:label_location_id>")
-def delete_label_location(label_location_id):
-    log_request(f"/delete_label_location/{label_location_id}")
+@app.route("/delete_label_location/<int:location_label_id>", methods=["POST"])
+def delete_label_location(location_label_id):
+    log_request(f"/delete_label_location/{location_label_id}")
     user = get_current_user()
-    label_location = LocationLabel.query.filter_by(label_id=label_location_id).all()[0]
-    if label_location is None:
+    location_label = db.session.get(LocationLabel, location_label_id)
+    if location_label is None or location_label.user_id != user.id:
         return abort(404)
-    if label_location.user.id != user.id:
-        return abort(401)
 
-    db.session.delete(label_location)
+    db.session.delete(location_label)
     db.session.commit()
     return redirect(url_for("index"))
 
@@ -324,12 +327,17 @@ def delete_label_location(label_location_id):
 def create_label_location():
     log_request("/create_label_location")
     user = get_current_user()
-    label_id = int(request.form["label_id"])
     trigger = request.form["trigger"]
     address = request.form["address"]
-    lat = float(request.form["lat"])
-    long = float(request.form["long"])
-    radius = float(request.form.get("radius", 300))
+    try:
+        label_id = int(request.form["label_id"])
+        lat = float(request.form["lat"])
+        long = float(request.form["long"])
+        radius = float(request.form.get("radius", 300))
+    except ValueError:
+        return abort(400)  # e.g. an address typed without picking a suggestion: no lat/long
+    if trigger not in ("on_enter", "on_leave"):
+        return abort(400)
     location_label = LocationLabel(
         user=user,
         label_id=label_id,
@@ -363,7 +371,7 @@ def webhook():
         event_data["id"],
         event_data.get("labels", []),
     )
-    user = User.query.get(int(initiator["id"]))
+    user = db.session.get(User, int(initiator["id"]))
     if user is None:
         app.logger.warning("No user found for initiator %s", initiator["id"])
         return ""

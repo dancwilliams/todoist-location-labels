@@ -152,14 +152,16 @@
                         <ul>
                             {% if location_labels.get(label['id']) %}
                                 <li style="height: 3em;">
-                                    <a
-                                        href="{{ url_for('delete_label_location', label_location_id= location_labels[label['id']].label_id) }}"
-                                        onclick="return confirm('Are you sure?')"
-                                        class="btn btn-outline-danger btn-sm"
-                                        title="delete"
+                                    <form
+                                        method="post"
+                                        action="{{ url_for('delete_label_location', location_label_id=location_labels[label['id']].id) }}"
+                                        onsubmit="return confirm('Are you sure?')"
+                                        style="display: inline;"
                                     >
-                                      <i class="fa fa-trash"></i>
-                                    </a>
+                                      <button type="submit" class="btn btn-outline-danger btn-sm" title="delete">
+                                        <i class="fa fa-trash"></i>
+                                      </button>
+                                    </form>
                                     {{ 'Arriving' if location_labels[label['id']].loc_trigger == 'on_enter' else 'Leaving' }} ({{ location_labels[label['id']].radius }} M) {{ location_labels[label['id']].name }}
                                 </li>
                             {% endif %}
