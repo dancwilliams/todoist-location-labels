@@ -22,6 +22,22 @@ from requests.adapters import HTTPAdapter  # noqa: E402
 
 import app as app_module  # noqa: E402
 
+HOME_REMINDER = {
+    "id": "r1",
+    "type": "location",
+    "item_id": "900",
+    "name": "Home",
+    "loc_trigger": "on_enter",
+    "radius": 100.0,
+}
+OTHER_REMINDER = dict(HOME_REMINDER, id="r2", item_id="901", name="Somewhere else")
+# What Todoist put in sync_status for a command it refused (read 2026-10-05); HTTP stayed 200.
+REFUSED = {"error": "Invalid argument value", "error_code": 20, "http_code": 400}
+
+
+def _sent(fake_todoist):
+    return [(c["type"], c["args"]) for c in fake_todoist["commands"]]
+
 
 @pytest.fixture
 def client():
@@ -87,7 +103,9 @@ def fake_todoist(monkeypatch):
     state["labels"] and state["reminders"] are what reads return, state["commands"]
     collects every sync command received, state["posts"] the form fields of each
     POST, state["hits"] every request. state["status"] and state["stall"] (seconds)
-    make it misbehave. The app's retry policy applies, with the waits removed.
+    make it misbehave, and a command whose type is in state["refuse"] is refused the
+    way Todoist refuses one: inside a 200 answer. The app's retry policy applies,
+    with the waits removed.
     """
     state = {
         "labels": [],
@@ -97,6 +115,7 @@ def fake_todoist(monkeypatch):
         "hits": 0,
         "status": 200,
         "stall": 0.0,
+        "refuse": (),
     }
 
     class Handler(BaseHTTPRequestHandler):
@@ -125,7 +144,10 @@ def fake_todoist(monkeypatch):
             self._reply(
                 {
                     "reminders": state["reminders"],
-                    "sync_status": {c["uuid"]: "ok" for c in commands},
+                    "sync_status": {
+                        c["uuid"]: REFUSED if c["type"] in state["refuse"] else "ok"
+                        for c in commands
+                    },
                 }
             )
 
@@ -133,7 +155,10 @@ def fake_todoist(monkeypatch):
             pass
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    # shutdown() waits out one poll; the default 0.5 s would cost that per test
+    threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+    ).start()
     monkeypatch.setattr(app_module, "TODOIST_API_BASE", f"http://127.0.0.1:{server.server_port}")
     policy = app_module.todoist_http.get_adapter("https://api.todoist.com").max_retries
     app_module.todoist_http.mount(

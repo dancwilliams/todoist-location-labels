@@ -1,3 +1,5 @@
+from conftest import HOME_REMINDER, OTHER_REMINDER, _sent
+
 import app as app_module
 
 
@@ -172,21 +174,6 @@ def test_login_sets_a_30_day_secure_cookie(client, monkeypatch):
     assert timedelta(days=29) < lifetime <= timedelta(days=30)
 
 
-HOME_REMINDER = {
-    "id": "r1",
-    "type": "location",
-    "item_id": "900",
-    "name": "Home",
-    "loc_trigger": "on_enter",
-    "radius": 100.0,
-}
-OTHER_REMINDER = dict(HOME_REMINDER, id="r2", item_id="901", name="Somewhere else")
-
-
-def _sent(fake_todoist):
-    return [(c["type"], c["args"]) for c in fake_todoist["commands"]]
-
-
 def test_editing_a_mapping_moves_its_reminders(client, login, fake_todoist):
     """C1: the reminder a mapping created follows the mapping to its new address."""
     fake_todoist["reminders"] = [HOME_REMINDER, OTHER_REMINDER]
@@ -213,7 +200,7 @@ def test_editing_a_mapping_moves_its_reminders(client, login, fake_todoist):
                 "loc_lat": "9.5",
                 "loc_long": "8.5",
                 "loc_trigger": "on_leave",
-                "radius": 250.0,
+                "radius": 250,
             },
         ),
     ]
@@ -260,4 +247,23 @@ def test_mapping_is_unchanged_when_todoist_is_down(client, login, fake_todoist):
     edit = client.post("/create_label_location", data=_form(label_id="10", address="2 Oak Ave"))
     delete = client.post(f"/delete_label_location/{_mapping_id()}")
     assert (edit.status_code, delete.status_code) == (502, 502)
+    assert app_module.LocationLabel.query.filter_by(label_id=10).one().name == "Home"
+
+
+def test_refused_delete_keeps_the_mapping(client, login, fake_todoist):
+    """D1: a mapping is not removed while Todoist still holds its reminders."""
+    fake_todoist["reminders"] = [HOME_REMINDER]
+    fake_todoist["refuse"] = ("reminder_delete",)
+    assert client.post(f"/delete_label_location/{_mapping_id()}").status_code == 502
+    assert app_module.LocationLabel.query.count() == 1
+
+
+def test_refused_readd_during_edit_keeps_the_mapping(client, login, fake_todoist):
+    """D1, D4: a refused edit is reported, the mapping keeps its old values, and the
+    answer says what to do."""
+    fake_todoist["reminders"] = [HOME_REMINDER]
+    fake_todoist["refuse"] = ("reminder_add",)
+    r = client.post("/create_label_location", data=_form(label_id="10", address="2 Oak Ave"))
+    assert r.status_code == 502
+    assert "Submit the same change again" in r.get_data(as_text=True)
     assert app_module.LocationLabel.query.filter_by(label_id=10).one().name == "Home"
