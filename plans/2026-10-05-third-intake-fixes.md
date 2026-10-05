@@ -260,7 +260,7 @@ def test_a_stalled_connect_is_not_retried(monkeypatch):
 #### Automated Verification
 - [x] Each test in the table fails on 721300a for the stated reason; output in the PR body
 - [x] `make check` exits 0
-- [ ] CI green on the PR
+- [x] CI green on the PR (#41, `check (3.13)` and `check (3.14)` pass on b22760d)
 - [ ] After Dan's merge: deploy job green and `curl -s -o /dev/null -w '%{http_code}' https://todoist-location-labels.fly.dev/` prints 200
 
 #### Manual Verification
