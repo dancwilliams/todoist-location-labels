@@ -433,13 +433,15 @@ Delete `ignore_missing_imports` (item 1); delete `[tool.ruff.format]` and `targe
 #### Automated Verification
 - [x] The new test and the three new rows fail on PR B's code; output in the PR body (on ba75428: `test_second_label_at_the_same_place_is_refused` 302 == 400; `test_create_rejects_bad_input` fails at `{"lat": "nan"}` with `sqlite3.IntegrityError: NOT NULL constraint failed: location_label.lat`, SQLite storing NaN as NULL, where the plan expected a 302 — production Postgres would have stored it)
 - [x] `make check` exits 0 (45 passed, `app.py` 90%; mypy clean without `ignore_missing_imports`); CI green
-- [ ] After Dan's merge: deploy green; machine `started` with its check passing after the `fly.toml` change
+- [x] After Dan's merge: deploy green; machine `started` with its check passing after the `fly.toml` change (PR #43 squash-merged as 42f3fc7, CI run 37482505153 all three jobs green, Fly release v83, machine 91854667f4e938 `started` with check `passing`, `/` answers 200)
 
 #### Manual Verification
-- [ ] Before the merge: Phase 0b's `same_place_pairs` is zero, or the pairs are separated
-- [ ] Map a second label to the same address with the same trigger and radius: the page says another label already has this place
-- [ ] Type an address and submit without picking a suggestion: the browser shows "Pick an address from the list". Pick one, then change a character: blocked again
-- [ ] "How to verify" steps 2 to 5
+- [x] Before the merge: Phase 0b's `same_place_pairs` is zero, or the pairs are separated (zero on 2026-10-05)
+- [x] Map a second label to the same address with the same trigger and radius: the page says another label already has this place — Dan, 2026-10-06 on v83; the log shows the 14:54:28Z `/create_label_location` request with no sweep or reminder line after it, which is what the 400 looks like (an `abort` is not logged)
+- [x] Type an address and submit without picking a suggestion: the browser shows "Pick an address from the list". Pick one, then change a character: blocked again — Dan, 2026-10-06 on v83; leaves no server line
+- [x] "How to verify" steps 2 to 5 — PASSED on v83, 2026-10-06 (Fly log, UTC, mapping row 22, task `6hfx8ph4c7X6gJ7x`): 14:55:11 `Existing location reminders for item: 0`, `reminder_add` ok; 14:55:26 edit to 255, `sweep matched 1 of 1`, two ok; 14:55:42 edit back, `sweep matched 1 of 1`, two ok; 14:55:51 untag `reminder_delete` ok, 14:55:56 retag `reminder_add` ok; 14:56:02 delete, `sweep matched 1 of 1`, one ok. No refused, failed, redelivery or traceback line; the only `[error]` lines are Fly's health probe during the v83 boot (14:50:50Z, 14:52:39Z).
+
+**Result**: PR #43, squash-merged as 42f3fc7, Fly release v83. Two tests failing-first on ba75428 (the `nan` row as a SQLite IntegrityError, not the plan's 302); 45 tests, `app.py` 90%. D2, D6, D7 closed; report section 5 items 1, 2, 3, 6 done; mypy runs without `ignore_missing_imports`.
 
 ---
 
@@ -448,6 +450,8 @@ Delete `ignore_missing_imports` (item 1); delete `[tool.ruff.format]` and `targe
 - Run `/repo-intake` (fourth run). The `improve` pass goes to a fresh agent that is given the code and not this plan's reasoning (report section 8, item 4). Scope: `git diff 721300a..HEAD`. Expected: 0 tier 1, 0 tier 2.
 - Tick the boxes; write each phase's result under it, with PR, commit and release.
 - AutoMem: one pointer memory, linked to the third intake; remove the `open-loop` tag from the sweep bug's memory once 0a has passed.
+
+**Result** (2026-10-06): fourth intake at 42f3fc7, `plans/intake-2026-10-06.md`, improve pass by a fresh agent on `git diff 721300a..HEAD`. **0 tier 1, 2 tier 2**, not the 0 and 0 expected: 2.12 (`CLAUDE.md:80` "in one batch" is several above 50 tasks) and 2.25 (B1, a bug this run found, is not in the README). Every item of the third report is closed. B1: a sweep with one refused add leaves the other tasks moved while the mapping keeps its old place; a task that changes before the resubmit ends up with two reminders. Reproduced in one batch. It is decisions 1 and 2 together; "Settled from evidence" above recorded the lost reminder and not the duplicates. Fix in the report's section 7 (save the mapping when only adds were refused). AutoMem pointer stored and linked to the third intake; the open-loop tags on the Phase 1 and Phase 3 memories removed.
 
 ## Testing Strategy
 
