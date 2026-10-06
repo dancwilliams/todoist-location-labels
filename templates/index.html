@@ -271,6 +271,11 @@
             // When the user selects an address from the dropdown, populate the address
             // fields in the form.
             autocomplete.addListener('place_changed', fillInAddress);
+
+            // Typing marks the box invalid until a suggestion is picked, so a name
+            // cannot be submitted with another place's coordinates.
+            var box = document.getElementById('autocomplete');
+            box.addEventListener('input', function () { box.setCustomValidity('Pick an address from the list'); });
         }
 
         function fillInAddress() {
@@ -279,6 +284,7 @@
 
             document.getElementById('lat').value = place.geometry.location.lat();
             document.getElementById('long').value = place.geometry.location.lng();
+            document.getElementById('autocomplete').setCustomValidity('');
         }
     </script>
     <script src="https://maps.googleapis.com/maps/api/js?key={{ google_map_api_key }}&libraries=places&callback=initAutocomplete" async defer></script>

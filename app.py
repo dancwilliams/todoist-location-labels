@@ -273,6 +273,11 @@ def place_of(location_label):
     )
 
 
+def match_key(place):
+    """The values a reminder is matched on: (name, trigger, radius)."""
+    return (place[0], place[3], place[4])
+
+
 def reminder_is_at(reminder, place):
     """True if a location reminder carries this place's name, trigger and radius.
 
@@ -280,12 +285,10 @@ def reminder_is_at(reminder, place):
     app stores no reminder ids. A reminder the user made by hand with the same
     three values is indistinguishable from one of ours.
     """
-    name, _lat, _long, loc_trigger, radius = place
-    return (
-        reminder.get("type") == "location"
-        and reminder.get("name") == name
-        and reminder.get("loc_trigger") == loc_trigger
-        and reminder.get("radius") == radius
+    return reminder.get("type") == "location" and match_key(place) == (
+        reminder.get("name"),
+        reminder.get("loc_trigger"),
+        reminder.get("radius"),
     )
 
 
@@ -329,11 +332,7 @@ def index():
             labels, user_info = [], {}
         kwargs["labels"] = labels
         kwargs["user_full_name"] = user_info.get("full_name", "")
-        # map from label id to location labels
-        location_labels = {}
-        for item in user.location_labels.all():
-            location_labels[str(item.label_id)] = item
-        kwargs["location_labels"] = location_labels
+        kwargs["location_labels"] = {str(ll.label_id): ll for ll in user.location_labels}
     return render_template("index.html", **kwargs)
 
 
@@ -438,12 +437,27 @@ def create_label_location():
     if trigger not in ("on_enter", "on_leave"):
         return abort(400)
     # Only what Todoist stores unchanged is accepted, so a mapping always equals
-    # the reminders made from it.
-    if not (1 <= radius <= MAX_RADIUS and 1 <= len(address) <= MAX_NAME):
+    # the reminders made from it. Todoist stores nan and out-of-range coordinates
+    # as sent (measured 2026-10-05); nan fails every comparison, so it is refused here.
+    if not (
+        1 <= radius <= MAX_RADIUS
+        and 1 <= len(address) <= MAX_NAME
+        and -90 <= lat <= 90
+        and -180 <= long <= 180
+    ):
         return abort(400)
+    new_place = (address, lat, long, trigger, radius)
+    # Two mappings that match the same reminders cannot be told apart, so the
+    # webhook would delete for one what it added for the other.
+    for other in user.location_labels:
+        if other.label_id != label_id and match_key(place_of(other)) == match_key(new_place):
+            return abort(
+                400,
+                description="Another label is already mapped to this address, trigger and radius. "
+                "Change one of the three.",
+            )
     # Submitting a label that is already mapped edits that mapping, and moves
     # the reminders it has already created to the new place.
-    new_place = (address, lat, long, trigger, radius)
     location_label = LocationLabel.query.filter_by(user_id=user.id, label_id=label_id).first()
     if location_label is None:
         location_label = LocationLabel(user=user, label_id=label_id)

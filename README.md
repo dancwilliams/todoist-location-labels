@@ -14,7 +14,6 @@ Automatically add location-based reminders to Todoist tasks by assigning labels.
 
 - Reminders are matched to a mapping by address, trigger and radius. A reminder you make by hand with the same three values is treated as the app's.
 - Changing a mapping deletes each of its reminders and creates it again at the new place. If Todoist refuses to create one, the page says so and that task's reminder comes back the next time the task changes.
-- Two labels mapped to the same address, trigger and radius can make a task's reminder disappear and reappear on alternate updates.
 - When something fails, the only record is the hosting log, which keeps a few minutes of history.
 
 ## Stack
