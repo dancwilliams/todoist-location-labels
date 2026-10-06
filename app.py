@@ -163,7 +163,9 @@ def todoist_get_all(endpoint, token, params=None):
     """Every item of a paginated v1 list. Raises on API failure or an unexpected shape."""
     # Pages are {"results": [...], "next_cursor": ...}. Every page is read, and
     # anything else raises, so a second page is never mistaken for "not there".
-    items, cursor = [], None
+    # A cursor that repeats would loop until gunicorn's 30 s timeout killed the
+    # worker; it has not been seen, and it raises rather than spin.
+    items, cursor, seen = [], None, set()
     while True:
         page = todoist_api_get(
             endpoint, token, {**(params or {}), **({"cursor": cursor} if cursor else {})}
@@ -172,6 +174,9 @@ def todoist_get_all(endpoint, token, params=None):
         cursor = page.get("next_cursor")
         if not cursor:
             return items
+        if cursor in seen:
+            raise requests.exceptions.RequestException(f"{endpoint}: cursor {cursor!r} repeated")
+        seen.add(cursor)
 
 
 def todoist_get_labels(token):
@@ -259,17 +264,6 @@ def todoist_run_commands(token, commands, what):
         refused.update({k: v for k, v in status.items() if v != "ok"})
     if refused:
         raise TodoistRefused(what, refused)
-
-
-def todoist_add_reminder(token, item_id, name, loc_lat, loc_long, loc_trigger, radius):
-    """Add a location reminder via sync command."""
-    command = reminder_add_command(item_id, name, loc_lat, loc_long, loc_trigger, radius)
-    todoist_run_commands(token, [command], "reminder_add")
-
-
-def todoist_delete_reminder(token, reminder_id):
-    """Delete a reminder via sync command."""
-    todoist_run_commands(token, [reminder_delete_command(reminder_id)], "reminder_delete")
 
 
 def place_of(location_label):
@@ -441,7 +435,7 @@ def delete_label_location(location_label_id):
         return abort(404)
     try:
         sweep_reminders(user.oauth_token, place_of(location_label))
-    except requests.exceptions.RequestException as e:
+    except (requests.exceptions.RequestException, KeyError, TypeError) as e:
         app.logger.error("Could not remove reminders, mapping %s kept: %s", location_label.id, e)
         return abort(502, description=SWEEP_FAILED)
 
@@ -495,7 +489,7 @@ def create_label_location():
     elif place_of(location_label) != new_place:
         try:
             missing = sweep_reminders(user.oauth_token, place_of(location_label), new_place)
-        except requests.exceptions.RequestException as e:
+        except (requests.exceptions.RequestException, KeyError, TypeError) as e:
             app.logger.error(
                 "Could not move reminders, mapping %s unchanged: %s", location_label.id, e
             )
@@ -554,17 +548,16 @@ def webhook():
     label_name_to_id = {label["name"]: label["id"] for label in all_labels}
     app.logger.info("User has %d labels, name->id map built", len(all_labels))
 
-    # Map the task's label names to label IDs
-    task_label_names = event_data.get("labels", [])
-    task_label_ids = []
-    for name in task_label_names:
+    # Map the task's label names to label IDs (API v1 webhooks carry names)
+    task_label_ids = set()
+    for name in event_data.get("labels", []):
         label_id = label_name_to_id.get(name)
-        if label_id is not None:
-            task_label_ids.append(label_id)
-        else:
+        if label_id is None:
             app.logger.warning("Label '%s' not found in user's labels", name)
+        else:
+            task_label_ids.add(str(label_id))
 
-    app.logger.info("Task label IDs: %s", task_label_ids)
+    app.logger.info("Task label IDs: %s", sorted(task_label_ids))
 
     app.logger.info("Existing location reminders for item: %d", len(item_reminders))
 
@@ -573,9 +566,8 @@ def webhook():
     by_label = {str(ll.label_id): ll for ll in user_location_labels}
 
     # Determine which location labels are NOT on this task (for deletion)
-    task_label_id_strs = [str(lid) for lid in task_label_ids]
     not_used_location_labels = [
-        ll for ll in user_location_labels if str(ll.label_id) not in task_label_id_strs
+        ll for ll in user_location_labels if str(ll.label_id) not in task_label_ids
     ]
 
     # A failed add or delete answers 503 as well: reporting the event as handled
@@ -586,12 +578,14 @@ def webhook():
             for ll in not_used_location_labels:
                 if reminder_is_at(reminder, place_of(ll)):
                     app.logger.info("Deleting reminder %s (label removed)", reminder["id"])
-                    todoist_delete_reminder(token, reminder["id"])
+                    todoist_run_commands(
+                        token, [reminder_delete_command(reminder["id"])], "reminder_delete"
+                    )
                     break
 
         # Add reminders for matching labels
         for label_id in task_label_ids:
-            loc_label = by_label.get(str(label_id))
+            loc_label = by_label.get(label_id)
             if loc_label is None:
                 app.logger.info("No location config for label %s, skip", label_id)
                 continue
@@ -608,7 +602,8 @@ def webhook():
                 loc_label.id,
                 loc_label.loc_trigger,
             )
-            todoist_add_reminder(token, event_data["id"], *place_of(loc_label))
+            command = reminder_add_command(event_data["id"], *place_of(loc_label))
+            todoist_run_commands(token, [command], "reminder_add")
     except requests.exceptions.RequestException as e:
         app.logger.error("Todoist write failed, asking for redelivery: %s", e)
         return "todoist api error", 503

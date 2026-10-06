@@ -16,7 +16,7 @@ Originally by @fangpenlin, then @IcyPalm, now maintained by @dancwilliams.
 4. Webhook handler reconciles the task's labels against configured location-labels:
    - Adds location reminders for newly-matching labels (dedupes against existing reminders)
    - Deletes reminders whose matching label is no longer on the task
-5. Editing or deleting a mapping in the UI sweeps Todoist first (`sweep_reminders`): every reminder made from that mapping is deleted, and for an edit re-added on the same task at the new place. If Todoist cannot be reached or refuses a delete, the request answers 502 with a sentence saying to submit the change again, and the mapping is left as it was. If only re-adds were refused, every delete went through, so the mapping is saved at the new place and the 502 says each missing reminder comes back the next time its task changes (the webhook re-creates it there). Kept at the old place, the mapping would no longer match the reminders that did move, and a task change plus a resubmit would leave that task with two reminders.
+5. Editing or deleting a mapping in the UI sweeps Todoist first (`sweep_reminders`): every reminder made from that mapping is deleted, and for an edit re-added on the same task at the new place. If Todoist cannot be reached, answers in an unexpected shape, or refuses a delete, the request answers 502 with a sentence saying to submit the change again, and the mapping is left as it was. If only re-adds were refused, every delete went through, so the mapping is saved at the new place and the 502 says each missing reminder comes back the next time its task changes (the webhook re-creates it there). Kept at the old place, the mapping would no longer match the reminders that did move, and a task change plus a resubmit would leave that task with two reminders.
 
 ### Key Components
 - **`app.py`** - All application logic (routes, models, webhook handler, Todoist API client)
@@ -81,7 +81,7 @@ make check                    # what CI runs: ruff format --check, ruff check, m
 - There is no alerting. A failure shows only in Fly's log, which keeps about 100 lines.
 - The app never requests a full sync. Reminders are read through REST (`GET /api/v1/location_reminders`, by `task_id` in the webhook, all of them in a sweep); the sync endpoint is used for commands only. A full sync is limited to 100 per user per 15 minutes, and the webhook used to make one on every task change.
 - The mapped address is not logged; webhook lines carry the mapping's row id.
-- `todoist_get_all` follows `next_cursor` until it is empty, for labels and reminders alike; reading only the first page would make later labels look removed and later reminders look absent.
+- `todoist_get_all` follows `next_cursor` until it is empty, for labels and reminders alike, and raises if a cursor repeats; reading only the first page would make later labels look removed and later reminders look absent.
 - Deleting a mapping is `POST /delete_label_location/<row id>` (the `LocationLabel.id`, not the Todoist label id). GET is refused so a cross-site link cannot delete.
 - No tracing. The OpenTelemetry stack was removed 2026-10-04: it had recorded nothing since the March migration (no configurator was installed, so every span was a no-op) and nobody missed it.
 - `log_request` skips requests without `Fly-Client-IP`, which is how Fly's 15-second health check stays out of the log.
