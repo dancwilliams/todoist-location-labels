@@ -272,11 +272,24 @@ def test_refused_delete_keeps_the_mapping(client, login, fake_todoist):
     assert app_module.LocationLabel.query.count() == 1
 
 
-def test_refused_readd_during_edit_keeps_the_mapping(client, login, fake_todoist):
-    """D1, D4: a refused edit is reported, the mapping keeps its old values, and the
-    answer says what to do."""
-    fake_todoist["reminders"] = [HOME_REMINDER]
+def test_refused_readd_during_edit_saves_the_mapping(client, login, fake_todoist, monkeypatch):
+    """B1: when only adds are refused, every delete went through, so nothing is left at
+    the old place. The mapping is saved at the new one (the webhook re-creates each
+    missing reminder there), every batch is still sent, and the answer says so."""
+    fake_todoist["reminders"] = [HOME_REMINDER, dict(HOME_REMINDER, id="r3", item_id="902")]
     fake_todoist["refuse"] = ("reminder_add",)
+    monkeypatch.setattr(app_module, "SYNC_BATCH", 2)
+    r = client.post("/create_label_location", data=_form(label_id="10", address="2 Oak Ave"))
+    assert app_module.LocationLabel.query.filter_by(label_id=10).one().name == "2 Oak Ave"
+    assert [t for t, _ in _sent(fake_todoist)] == ["reminder_delete", "reminder_add"] * 2
+    assert r.status_code == 502
+    assert "comes back the next time its task changes" in r.get_data(as_text=True)
+
+
+def test_refused_delete_during_edit_keeps_the_mapping(client, login, fake_todoist):
+    """D1, D4: a reminder still at the old place means the mapping must stay there."""
+    fake_todoist["reminders"] = [HOME_REMINDER]
+    fake_todoist["refuse"] = ("reminder_delete",)
     r = client.post("/create_label_location", data=_form(label_id="10", address="2 Oak Ave"))
     assert r.status_code == 502
     assert "Submit the same change again" in r.get_data(as_text=True)
