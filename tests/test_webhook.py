@@ -109,7 +109,7 @@ def test_failed_add_asks_for_redelivery(post_webhook, user, todoist, monkeypatch
     def down(*args):
         raise requests.exceptions.ConnectionError("todoist down")
 
-    monkeypatch.setattr(app_module, "todoist_add_reminder", down)
+    monkeypatch.setattr(app_module, "todoist_run_commands", down)
     assert post_webhook(_event(["Home"])).status_code == 503
 
 

@@ -29,7 +29,9 @@ def test_a_stalled_todoist_is_not_retried(fake_todoist, monkeypatch, call):
         if call == "read":
             app_module.todoist_api_get("labels", "tok")
         else:
-            app_module.todoist_delete_reminder("tok", "r1")
+            app_module.todoist_run_commands(
+                "tok", [app_module.reminder_delete_command("r1")], "reminder_delete"
+            )
     assert fake_todoist["hits"] == 1
 
 
@@ -70,9 +72,26 @@ def test_labels_follow_next_cursor(monkeypatch):
     assert seen == [("labels", None), ("labels", "c1")]
 
 
+def test_a_repeated_cursor_raises(monkeypatch):
+    """B4: a cursor that repeats must raise, not spin until gunicorn kills the worker."""
+    calls = []
+
+    def same_page_forever(endpoint, token, params=None):
+        calls.append(params)
+        assert len(calls) <= 50, "todoist_get_all is looping"
+        return {"results": [], "next_cursor": "same"}
+
+    monkeypatch.setattr(app_module, "todoist_api_get", same_page_forever)
+    with pytest.raises(requests.exceptions.RequestException):
+        app_module.todoist_get_labels("tok")
+    assert len(calls) <= 3
+
+
 def test_reading_reminders_is_not_a_full_sync(fake_todoist):
     """C4, D5: a command sends only itself, and a read is not a sync at all. A full sync
     is limited to 100 per user per 15 minutes."""
-    app_module.todoist_delete_reminder("tok", "r1")
+    app_module.todoist_run_commands(
+        "tok", [app_module.reminder_delete_command("r1")], "reminder_delete"
+    )
     app_module.todoist_get_reminders("tok")
     assert fake_todoist["posts"] == [["commands"]]

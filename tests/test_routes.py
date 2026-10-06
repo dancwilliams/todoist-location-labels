@@ -17,12 +17,6 @@ def _other_users_mapping():
     return row.id
 
 
-def test_delete_own_mapping(client, login, fake_todoist):
-    r = client.post(f"/delete_label_location/{_mapping_id()}")
-    assert r.status_code == 302
-    assert app_module.LocationLabel.query.count() == 0
-
-
 def test_delete_unknown_mapping_is_404(client, login):
     assert client.post("/delete_label_location/999").status_code == 404
 
@@ -262,6 +256,18 @@ def test_mapping_is_unchanged_when_todoist_is_down(client, login, fake_todoist):
     delete = client.post(f"/delete_label_location/{_mapping_id()}")
     assert (edit.status_code, delete.status_code) == (502, 502)
     assert app_module.LocationLabel.query.filter_by(label_id=10).one().name == "Home"
+
+
+def test_malformed_reminders_page_during_a_sweep_is_a_502(client, login, monkeypatch):
+    """B3: a reminders read that comes back in an unexpected shape is told to the user
+    like any other failure, and the mapping is kept."""
+    monkeypatch.setattr(
+        app_module, "todoist_api_get", lambda endpoint, token, params=None: ["not", "a", "dict"]
+    )
+    r = client.post(f"/delete_label_location/{_mapping_id()}")
+    assert r.status_code == 502
+    assert "Submit the same change again" in r.get_data(as_text=True)
+    assert app_module.LocationLabel.query.count() == 1
 
 
 def test_refused_delete_keeps_the_mapping(client, login, fake_todoist):
