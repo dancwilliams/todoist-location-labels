@@ -97,11 +97,13 @@ SYNC_BATCH = 100  # Todoist accepts at most 100 commands per sync request
 # larger radius is stored as 255, a longer name or a fractional radius is refused.
 MAX_RADIUS = 255  # meters
 MAX_NAME = 255  # characters
-# Said with a 502. A sweep that stopped part-way is finished by submitting again;
-# a reminder whose re-add was refused is re-created by the webhook.
-SWEEP_FAILED = (
-    "Todoist did not accept every change. Submit the same change again. "
-    "If a task's reminder is missing, it comes back the next time that task changes."
+# Both said with a 502. A sweep that failed with reminders still at the old
+# place is finished by submitting again; one where only adds were refused has
+# saved the mapping, and the webhook re-creates each missing reminder.
+SWEEP_FAILED = "Todoist did not accept every change. Submit the same change again."
+ADDS_REFUSED = (
+    "Todoist did not create every reminder. The change is saved; "
+    "a missing reminder comes back the next time its task changes."
 )
 
 # One session for every outbound call. A 429 or 5xx answer is retried three
@@ -232,18 +234,31 @@ def reminder_delete_command(reminder_id):
     }
 
 
+class TodoistRefused(requests.exceptions.RequestException):
+    """Todoist answered 200 and refused some commands: `refused` maps each uuid to its status."""
+
+    def __init__(self, what, refused):
+        super().__init__(f"{what} refused: {refused}")
+        self.refused = refused
+
+
 def todoist_run_commands(token, commands, what):
-    """Send sync commands, at most SYNC_BATCH per request. Raises if Todoist refuses any."""
+    """Send sync commands, at most SYNC_BATCH per request.
+
+    Every batch is sent; then TodoistRefused is raised if any command was refused.
+    Todoist applies each command on its own, so a refusal does not undo the rest.
+    """
+    refused = {}
     for start in range(0, len(commands), SYNC_BATCH):
         batch = commands[start : start + SYNC_BATCH]
         sync_status = todoist_sync(token, commands=batch).get("sync_status", {})
         app.logger.info("%s sync result: %s", what, sync_status)
         # Todoist answers HTTP 200 and reports a refused command here. A command
         # with no status at all counts as refused too.
-        refused = {c["uuid"]: sync_status.get(c["uuid"]) for c in batch}
-        refused = {k: v for k, v in refused.items() if v != "ok"}
-        if refused:
-            raise requests.exceptions.RequestException(f"{what} refused: {refused}")
+        status = {c["uuid"]: sync_status.get(c["uuid"]) for c in batch}
+        refused.update({k: v for k, v in status.items() if v != "ok"})
+    if refused:
+        raise TodoistRefused(what, refused)
 
 
 def todoist_add_reminder(token, item_id, name, loc_lat, loc_long, loc_trigger, radius):
@@ -296,8 +311,9 @@ def sweep_reminders(token, old_place, new_place=None):
     """Remove every reminder made from a mapping; for an edit, re-add each at the new place.
 
     Without this, changing or deleting a mapping would strand its reminders: they
-    would match no mapping, so no later webhook could remove them. Raises
-    RequestException on API failure, before or between batches.
+    would match no mapping, so no later webhook could remove them. Returns the
+    number of re-adds Todoist refused; raises RequestException on API failure or
+    if a delete was refused, in which case a reminder is still at the old place.
     """
     commands = []
     located = todoist_get_reminders(token)
@@ -308,7 +324,20 @@ def sweep_reminders(token, old_place, new_place=None):
         commands.append(reminder_delete_command(reminder["id"]))
         if new_place is not None:
             commands.append(reminder_add_command(reminder["item_id"], *new_place))
-    todoist_run_commands(token, commands, "sweep")
+    try:
+        todoist_run_commands(token, commands, "sweep")
+    except TodoistRefused as e:
+        adds = {c["uuid"] for c in commands if c["type"] == "reminder_add"}
+        if not set(e.refused) <= adds:
+            raise
+        # Every delete went through, so nothing is left at the old place and the
+        # mapping must move with the reminders that did: kept at the old place,
+        # it would no longer match them, the webhook would add a second reminder
+        # at the old place when such a task changes, and a resubmit would then
+        # leave that task with two at the new place.
+        app.logger.warning("sweep: %d re-adds refused, mapping saved: %s", len(e.refused), e)
+        return len(e.refused)
+    return 0
 
 
 @app.route("/")
@@ -447,6 +476,7 @@ def create_label_location():
     ):
         return abort(400)
     new_place = (address, lat, long, trigger, radius)
+    missing = 0
     # Two mappings that match the same reminders cannot be told apart, so the
     # webhook would delete for one what it added for the other.
     for other in user.location_labels:
@@ -464,7 +494,7 @@ def create_label_location():
         db.session.add(location_label)
     elif place_of(location_label) != new_place:
         try:
-            sweep_reminders(user.oauth_token, place_of(location_label), new_place)
+            missing = sweep_reminders(user.oauth_token, place_of(location_label), new_place)
         except requests.exceptions.RequestException as e:
             app.logger.error(
                 "Could not move reminders, mapping %s unchanged: %s", location_label.id, e
@@ -478,6 +508,8 @@ def create_label_location():
         location_label.radius,
     ) = new_place
     db.session.commit()
+    if missing:
+        return abort(502, description=ADDS_REFUSED)
     return redirect(url_for("index"))
 
 
