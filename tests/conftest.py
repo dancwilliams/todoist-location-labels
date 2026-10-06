@@ -132,7 +132,16 @@ def fake_todoist(monkeypatch):
 
         def do_GET(self):
             state["hits"] += 1
-            self._reply({"results": state["labels"], "next_cursor": None})
+            url = urllib.parse.urlparse(self.path)
+            query = urllib.parse.parse_qs(url.query)
+            if url.path.endswith("/location_reminders"):
+                # With task_id the real endpoint answered only that task's reminders
+                # while the account held others (read 2026-10-05).
+                task_id = query.get("task_id", [None])[0]
+                results = [r for r in state["reminders"] if task_id in (None, r["item_id"])]
+            else:
+                results = state["labels"]
+            self._reply({"results": results, "next_cursor": None})
 
         def do_POST(self):
             state["hits"] += 1
@@ -143,7 +152,6 @@ def fake_todoist(monkeypatch):
             state["commands"].extend(commands)
             self._reply(
                 {
-                    "reminders": state["reminders"],
                     "sync_status": {
                         c["uuid"]: REFUSED if c["type"] in state["refuse"] else "ok"
                         for c in commands

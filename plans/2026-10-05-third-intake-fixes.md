@@ -261,13 +261,15 @@ def test_a_stalled_connect_is_not_retried(monkeypatch):
 - [x] Each test in the table fails on 721300a for the stated reason; output in the PR body
 - [x] `make check` exits 0
 - [x] CI green on the PR (#41, `check (3.13)` and `check (3.14)` pass on b22760d)
-- [ ] After Dan's merge: deploy job green and `curl -s -o /dev/null -w '%{http_code}' https://todoist-location-labels.fly.dev/` prints 200
+- [x] After Dan's merge: deploy job green and `curl -s -o /dev/null -w '%{http_code}' https://todoist-location-labels.fly.dev/` prints 200 (PR #41 squash-merged as 8ad6ec4, run 37391269580 all green, Fly release v81, worker booted 23:57:34Z, check passing)
 
 #### Manual Verification
-- [ ] Before the merge: Phase 0a and 0b are done and recorded above
-- [ ] After the deploy: "How to verify" steps 1 to 6
+- [x] Before the merge: Phase 0a and 0b are done and recorded above
+- [x] After the deploy: "How to verify" steps 1 to 6 — PASSED on v81, 2026-10-06 (Fly log, UTC, mapping row 20): 00:00:55 `reminder_add` ok; 00:02:09 edit to 255, `sweep matched 1 of 1`, two ok; 00:02:41 edit back, `sweep matched 1 of 1`, two ok; 00:02:57 delete, `sweep matched 1 of 1`, one ok. No refused, failed, redelivery or traceback line.
 
 **Implementation Note**: stop after this phase until Dan confirms the manual steps.
+
+**Result**: PR #41, squash-merged as 8ad6ec4, Fly release v81. Five tests failing-first on 721300a; 43 tests, `app.py` 91%. One departure from the text: the 502 sentence is one constant `SWEEP_FAILED`. Side fix: `fake_todoist`'s shutdown poll is 0.01 s (suite 12.8 s → 1.0 s). D1, D3, D4, C6 closed; 2.7, 2.12, 2.25 cleared pending the fourth intake.
 
 ---
 
@@ -350,10 +352,10 @@ The second row does not fail first. It is a contract test for behaviour that mov
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `test_reading_reminders_is_not_a_full_sync` fails on PR A's code; output in the PR body
-- [ ] `grep -c sync_token app.py` prints 0
-- [ ] `make check` exits 0
-- [ ] Live check on a scratch task, before the PR opens (script written by the implementing session): add three reminders; `todoist_api_get("location_reminders", token, {"task_id": id, "limit": 2})` returns two results and a non-empty `next_cursor`; `todoist_get_all` with the same params returns all three; `todoist_get_reminders(token, id)` returns only that task's. If the first page does not carry a cursor, STOP: paging does not work the way labels do, and the sweep must keep the sync read
+- [x] `test_reading_reminders_is_not_a_full_sync` fails on PR A's code; output in the PR body (fails on 8ad6ec4 with `['resource_types', 'sync_token']` posted)
+- [x] `grep -c sync_token app.py` prints 0
+- [x] `make check` exits 0 (44 passed, `app.py` 90%)
+- [x] Live check on a scratch task, before the PR opens (script written by the implementing session): add three reminders; `todoist_api_get("location_reminders", token, {"task_id": id, "limit": 2})` returns two results and a non-empty `next_cursor`; `todoist_get_all` with the same params returns all three; `todoist_get_reminders(token, id)` returns only that task's. If the first page does not carry a cursor, STOP: paging does not work the way labels do, and the sweep must keep the sync read — PASSED 2026-10-06 on scratch task `6hh7pMCwJG5RXcRx`: first page 2 results, cursor present; `todoist_get_all` 3 (radii 100, 150, 200); by-task read 3, every `item_id` the scratch task's, every `type` `location`; account total 0 → 3 → task deleted (204), by-task read 0. The account held no other location reminder at the time, so the by-task narrowing against other tasks rests on the 2026-10-05 read above.
 - [ ] CI green; after Dan's merge, deploy green
 
 #### Manual Verification

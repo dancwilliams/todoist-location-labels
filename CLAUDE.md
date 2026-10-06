@@ -32,8 +32,8 @@ The app talks to **Todoist API v1** (`https://api.todoist.com/api/v1/`) exclusiv
 
 - `GET /api/v1/labels` — list user's labels (returns a paginated `{"results": [...]}` dict)
 - `GET /api/v1/user` — user profile (used post-OAuth and for the UI greeting)
-- `POST /api/v1/sync` — used for:
-  - Fetching reminders (`resource_types=["reminders", "reminders_location"]`)
+- `GET /api/v1/location_reminders` — the user's location reminders, all of them or one task's with `task_id`; paginated like labels
+- `POST /api/v1/sync` — commands only:
   - `reminder_add` command (type `location`, args: `item_id`, `name`, `loc_lat`, `loc_long`, `loc_trigger`, `radius`)
   - `reminder_delete` command
 - **Todoist Webhooks** — `/webhook` receives `item:added` / `item:updated` events. Every delivery is verified against `X-Todoist-Hmac-SHA256` (base64 HMAC-SHA256 of the raw body, keyed with `TODOIST_CLIENT_SECRET`); anything else gets 401 before the body is parsed (the raw bytes are read to compute the HMAC). Confirmed against a real delivery on 2026-10-04. Tests sign with the `post_webhook` fixture. The user is `event["user_id"]`, which Todoist documents as the user the event is delivered for; `initiator` is not used, because in a shared project it may be a collaborator who is not a user of this app.
@@ -79,9 +79,9 @@ make check                    # what CI runs: ruff format --check, ruff check, m
 - `todoist_run_commands` raises when `sync_status` holds anything but `ok` for a command it sent, or nothing at all (the refusal is tested through `fake_todoist`; the missing status is not). There is no list of which refusals are permanent: every one is a 503 from the webhook and a 502 from a route.
 - The sync `reminder_update` command does not work for location reminders: it answers `Reminder not found` (tried against the live API 2026-10-05). An edit therefore deletes and re-adds in one batch.
 - There is no alerting. A failure shows only in Fly's log, which keeps about 100 lines.
-- A sync call that only sends commands omits `resource_types` and `sync_token`; with them Todoist returns the whole account on every reminder add or delete.
+- The app never requests a full sync. Reminders are read through REST (`GET /api/v1/location_reminders`, by `task_id` in the webhook, all of them in a sweep); the sync endpoint is used for commands only. A full sync is limited to 100 per user per 15 minutes, and the webhook used to make one on every task change.
 - The mapped address is not logged; webhook lines carry the mapping's row id.
-- `todoist_get_labels` follows `next_cursor` until it is empty; reading only the first page would make later labels look removed.
+- `todoist_get_all` follows `next_cursor` until it is empty, for labels and reminders alike; reading only the first page would make later labels look removed and later reminders look absent.
 - Deleting a mapping is `POST /delete_label_location/<row id>` (the `LocationLabel.id`, not the Todoist label id). GET is refused so a cross-site link cannot delete.
 - No tracing. The OpenTelemetry stack was removed 2026-10-04: it had recorded nothing since the March migration (no configurator was installed, so every span was a no-op) and nobody missed it.
 - `log_request` skips requests without `Fly-Client-IP`, which is how Fly's 15-second health check stays out of the log.

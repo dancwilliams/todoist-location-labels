@@ -157,20 +157,35 @@ def todoist_api_get(endpoint, token, params=None):
     return response.json()
 
 
-def todoist_get_labels(token):
-    """Fetch all labels for a user. Raises RequestException on API failure."""
-    # API v1 returns pages: {"results": [...], "next_cursor": ...}. Every page is
-    # read, and anything else raises, so neither a malformed response nor a
-    # second page is ever mistaken for "label not on this account".
-    labels, cursor = [], None
+def todoist_get_all(endpoint, token, params=None):
+    """Every item of a paginated v1 list. Raises on API failure or an unexpected shape."""
+    # Pages are {"results": [...], "next_cursor": ...}. Every page is read, and
+    # anything else raises, so a second page is never mistaken for "not there".
+    items, cursor = [], None
     while True:
-        page = todoist_api_get("labels", token, {"cursor": cursor} if cursor else None)
-        labels.extend(page["results"])
+        page = todoist_api_get(
+            endpoint, token, {**(params or {}), **({"cursor": cursor} if cursor else {})}
+        )
+        items.extend(page["results"])
         cursor = page.get("next_cursor")
         if not cursor:
-            break
+            return items
+
+
+def todoist_get_labels(token):
+    """Fetch all labels for a user. Raises RequestException on API failure."""
+    labels = todoist_get_all("labels", token)
     app.logger.info("Fetched %d labels", len(labels))
     return labels
+
+
+def todoist_get_reminders(token, task_id=None):
+    """Location reminders: one task's, or all of them. Raises RequestException on API failure.
+
+    Read through REST, not sync: a full sync is limited to 100 per user per
+    15 minutes, and the webhook reads on every task change.
+    """
+    return todoist_get_all("location_reminders", token, {"task_id": task_id} if task_id else None)
 
 
 def todoist_get_user(token):
@@ -180,26 +195,16 @@ def todoist_get_user(token):
     return result
 
 
-def todoist_sync(token, resource_types=None, commands=None):
-    """Call the Todoist sync endpoint (API v1): a read, a batch of commands, or both."""
-    url = f"{TODOIST_API_BASE}/sync"
-    data = {}
-    if resource_types:  # a read; left out for a command, or Todoist returns the whole account
-        data["sync_token"] = "*"
-        data["resource_types"] = json.dumps(resource_types)
-    if commands:
-        data["commands"] = json.dumps(commands)
+def todoist_sync(token, commands):
+    """Send a batch of commands to the Todoist sync endpoint (API v1)."""
     response = todoist_http.post(
-        url, headers=todoist_headers(token), data=data, timeout=TODOIST_TIMEOUT
+        f"{TODOIST_API_BASE}/sync",
+        headers=todoist_headers(token),
+        data={"commands": json.dumps(commands)},
+        timeout=TODOIST_TIMEOUT,
     )
     response.raise_for_status()
     return response.json()
-
-
-def todoist_get_reminders(token):
-    """Fetch all reminders via sync. Raises RequestException on API failure."""
-    result = todoist_sync(token, resource_types=["reminders", "reminders_location"])
-    return result.get("reminders", [])
 
 
 def reminder_add_command(item_id, name, loc_lat, loc_long, loc_trigger, radius):
@@ -292,7 +297,7 @@ def sweep_reminders(token, old_place, new_place=None):
     RequestException on API failure, before or between batches.
     """
     commands = []
-    located = [r for r in todoist_get_reminders(token) if r.get("type") == "location"]
+    located = todoist_get_reminders(token)
     matched = [r for r in located if reminder_is_at(r, old_place)]
     # Zero of many is how a reminder that no longer matches its mapping shows up.
     app.logger.info("sweep matched %d of %d location reminders", len(matched), len(located))
@@ -494,7 +499,7 @@ def webhook():
     # Todoist redeliver the event (15 min later, up to three times).
     try:
         all_labels = todoist_get_labels(token)
-        all_reminders = todoist_get_reminders(token)
+        item_reminders = todoist_get_reminders(token, event_data["id"])
     except (requests.exceptions.RequestException, KeyError, TypeError) as e:
         app.logger.error("Todoist API unavailable, asking for redelivery: %s", e)
         return "todoist api error", 503
@@ -515,16 +520,11 @@ def webhook():
 
     app.logger.info("Task label IDs: %s", task_label_ids)
 
-    # Existing location reminders for this item
-    item_reminders = [
-        r
-        for r in all_reminders
-        if r.get("type") == "location" and str(r.get("item_id")) == str(event_data["id"])
-    ]
     app.logger.info("Existing location reminders for item: %d", len(item_reminders))
 
     # Find user's location-label configs
     user_location_labels = LocationLabel.query.filter_by(user_id=user.id).all()
+    by_label = {str(ll.label_id): ll for ll in user_location_labels}
 
     # Determine which location labels are NOT on this task (for deletion)
     task_label_id_strs = [str(lid) for lid in task_label_ids]
@@ -545,7 +545,7 @@ def webhook():
 
         # Add reminders for matching labels
         for label_id in task_label_ids:
-            loc_label = user.location_labels.filter_by(label_id=label_id).first()
+            loc_label = by_label.get(str(label_id))
             if loc_label is None:
                 app.logger.info("No location config for label %s, skip", label_id)
                 continue

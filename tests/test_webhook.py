@@ -48,6 +48,15 @@ def test_skips_when_reminder_exists(post_webhook, user, todoist):
     assert _sent(todoist) == []
 
 
+def test_webhook_ignores_other_tasks_reminders(post_webhook, user, todoist):
+    """Another task's reminder at this place is not this task's. The narrowing is the
+    task_id on the read, not a filter in the app, so nothing else pins it."""
+    todoist["reminders"] = [dict(HOME_REMINDER, item_id="901")]
+    r = post_webhook(_event(["Home"]))
+    assert r.status_code == 200
+    assert _sent(todoist) == [HOME_ADD]
+
+
 def test_deletes_reminder_when_label_removed(post_webhook, user, todoist):
     todoist["reminders"] = [HOME_REMINDER]
     r = post_webhook(_event([]))

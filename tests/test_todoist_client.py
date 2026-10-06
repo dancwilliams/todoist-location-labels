@@ -70,8 +70,9 @@ def test_labels_follow_next_cursor(monkeypatch):
     assert seen == [("labels", None), ("labels", "c1")]
 
 
-def test_a_command_does_not_ask_for_a_full_sync(fake_todoist):
-    """C4: adding or deleting a reminder sends the command and nothing else."""
+def test_reading_reminders_is_not_a_full_sync(fake_todoist):
+    """C4, D5: a command sends only itself, and a read is not a sync at all. A full sync
+    is limited to 100 per user per 15 minutes."""
     app_module.todoist_delete_reminder("tok", "r1")
     app_module.todoist_get_reminders("tok")
-    assert fake_todoist["posts"] == [["commands"], ["resource_types", "sync_token"]]
+    assert fake_todoist["posts"] == [["commands"]]
