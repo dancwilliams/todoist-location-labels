@@ -1,3 +1,4 @@
+import pytest
 from conftest import HOME_REMINDER, OTHER_REMINDER, _sent
 
 import app as app_module
@@ -136,7 +137,6 @@ def test_resubmitting_a_label_updates_it(client, login, fake_todoist):
 
 def test_database_refuses_duplicate_mapping(client, login):
     """B2: the constraint, not just the route, keeps one mapping per user and label."""
-    import pytest
     from sqlalchemy.exc import IntegrityError
 
     dup = app_module.LocationLabel(
@@ -258,12 +258,22 @@ def test_mapping_is_unchanged_when_todoist_is_down(client, login, fake_todoist):
     assert app_module.LocationLabel.query.filter_by(label_id=10).one().name == "Home"
 
 
-def test_malformed_reminders_page_during_a_sweep_is_a_502(client, login, monkeypatch):
-    """B3: a reminders read that comes back in an unexpected shape is told to the user
-    like any other failure, and the mapping is kept."""
-    monkeypatch.setattr(
-        app_module, "todoist_api_get", lambda endpoint, token, params=None: ["not", "a", "dict"]
-    )
+@pytest.mark.parametrize(
+    "patch, answer",
+    [
+        ("todoist_api_get", ["not", "a", "dict"]),
+        ("todoist_api_get", {"results": ["not a reminder"]}),
+        ("todoist_sync", []),
+        ("todoist_sync", {"sync_status": []}),
+    ],
+)
+def test_malformed_todoist_answer_during_a_sweep_is_a_502(
+    client, login, fake_todoist, monkeypatch, patch, answer
+):
+    """B3, B6: a Todoist answer in an unexpected shape, read or written, is told to the
+    user like any other failure, and the mapping is kept."""
+    fake_todoist["reminders"] = [HOME_REMINDER]  # so the sync cases have a command to send
+    monkeypatch.setattr(app_module, patch, lambda *a, **k: answer)
     r = client.post(f"/delete_label_location/{_mapping_id()}")
     assert r.status_code == 502
     assert "Submit the same change again" in r.get_data(as_text=True)
@@ -290,6 +300,36 @@ def test_refused_readd_during_edit_saves_the_mapping(client, login, fake_todoist
     assert [t for t, _ in _sent(fake_todoist)] == ["reminder_delete", "reminder_add"] * 2
     assert r.status_code == 502
     assert "comes back the next time its task changes" in r.get_data(as_text=True)
+
+
+def test_resubmitted_edit_does_not_double_a_moved_reminder(client, login, fake_todoist, caplog):
+    """B5: after a refused delete the mapping is kept while the other tasks' reminders
+    have moved. The resubmit the 502 asks for must converge: a task already holding a
+    reminder at the new place gets no second one."""
+    fake_todoist["reminders"] = [
+        HOME_REMINDER,  # task 900's old reminder, still there
+        dict(HOME_REMINDER, id="r2", name="2 Oak Ave"),  # task 900 already moved
+        dict(HOME_REMINDER, id="r3", item_id="902"),  # task 902 not moved
+    ]
+    r = client.post("/create_label_location", data=_form(label_id="10", address="2 Oak Ave"))
+    assert r.status_code == 302
+    assert _sent(fake_todoist) == [
+        ("reminder_delete", {"id": "r1"}),
+        ("reminder_delete", {"id": "r3"}),
+        (
+            "reminder_add",
+            {
+                "item_id": "902",
+                "type": "location",
+                "name": "2 Oak Ave",
+                "loc_lat": "1.5",
+                "loc_long": "2.5",
+                "loc_trigger": "on_enter",
+                "radius": 100,
+            },
+        ),
+    ]
+    assert "sweep: 1 re-adds skipped" in caplog.text
 
 
 def test_refused_delete_during_edit_keeps_the_mapping(client, login, fake_todoist):

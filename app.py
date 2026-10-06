@@ -170,7 +170,10 @@ def todoist_get_all(endpoint, token, params=None):
         page = todoist_api_get(
             endpoint, token, {**(params or {}), **({"cursor": cursor} if cursor else {})}
         )
-        items.extend(page["results"])
+        results = page.get("results") if isinstance(page, dict) else None
+        if not isinstance(results, list) or not all(isinstance(r, dict) for r in results):
+            raise requests.exceptions.RequestException(f"{endpoint}: unexpected page shape")
+        items.extend(results)
         cursor = page.get("next_cursor")
         if not cursor:
             return items
@@ -256,7 +259,12 @@ def todoist_run_commands(token, commands, what):
     refused = {}
     for start in range(0, len(commands), SYNC_BATCH):
         batch = commands[start : start + SYNC_BATCH]
-        sync_status = todoist_sync(token, commands=batch).get("sync_status", {})
+        answer = todoist_sync(token, commands=batch)
+        sync_status = answer.get("sync_status") if isinstance(answer, dict) else None
+        if not isinstance(sync_status, dict):
+            # Earlier batches are applied and later ones are not sent: the route
+            # answers 502 and the resubmit converges (the sweep skips what moved).
+            raise requests.exceptions.RequestException(f"{what}: unexpected sync answer")
         app.logger.info("%s sync result: %s", what, sync_status)
         # Todoist answers HTTP 200 and reports a refused command here. A command
         # with no status at all counts as refused too.
@@ -314,10 +322,18 @@ def sweep_reminders(token, old_place, new_place=None):
     matched = [r for r in located if reminder_is_at(r, old_place)]
     # Zero of many is how a reminder that no longer matches its mapping shows up.
     app.logger.info("sweep matched %d of %d location reminders", len(matched), len(located))
+    # After a refused delete, a missing status or a worker killed mid-sweep, some
+    # tasks have moved and some have not. The resubmit the 502 asks for must
+    # converge, so a task already holding a reminder at the new place gets no second one.
+    already = {
+        r["item_id"] for r in located if new_place is not None and reminder_is_at(r, new_place)
+    }
     for reminder in matched:
         commands.append(reminder_delete_command(reminder["id"]))
-        if new_place is not None:
+        if new_place is not None and reminder["item_id"] not in already:
             commands.append(reminder_add_command(reminder["item_id"], *new_place))
+    if skipped := sum(r["item_id"] in already for r in matched):
+        app.logger.info("sweep: %d re-adds skipped, reminder already at the new place", skipped)
     try:
         todoist_run_commands(token, commands, "sweep")
     except TodoistRefused as e:

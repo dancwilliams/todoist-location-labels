@@ -5,3 +5,4 @@ tests
 plans
 __pycache__
 *.pyc
+.env*
