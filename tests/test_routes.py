@@ -92,6 +92,20 @@ def test_create_rejects_bad_input(client, login):
     # over 255 comes back as 255, a fractional one or a 256-character name is refused.
     for bad in ({"radius": "256"}, {"radius": "0"}, {"radius": "100.5"}, {"address": "x" * 256}):
         assert client.post("/create_label_location", data=_form(**bad)).status_code == 400, bad
+    # D6: Todoist stores nan and 95.0 as sent (measured 2026-10-05), so the form must refuse them.
+    for bad in ({"lat": "nan"}, {"lat": "95"}, {"long": "inf"}):
+        assert client.post("/create_label_location", data=_form(**bad)).status_code == 400, bad
+    assert app_module.LocationLabel.query.filter_by(label_id=30).count() == 0
+
+
+def test_second_label_at_the_same_place_is_refused(client, login, fake_todoist):
+    """D2: two mappings matching the same reminders would undo each other's work."""
+    r = client.post(
+        "/create_label_location",
+        data=_form(address="Home", lat="1.0", long="2.0", radius="100", trigger="on_enter"),
+    )
+    assert r.status_code == 400
+    assert "Another label is already mapped" in r.get_data(as_text=True)
     assert app_module.LocationLabel.query.filter_by(label_id=30).count() == 0
 
 

@@ -356,13 +356,15 @@ The second row does not fail first. It is a contract test for behaviour that mov
 - [x] `grep -c sync_token app.py` prints 0
 - [x] `make check` exits 0 (44 passed, `app.py` 90%)
 - [x] Live check on a scratch task, before the PR opens (script written by the implementing session): add three reminders; `todoist_api_get("location_reminders", token, {"task_id": id, "limit": 2})` returns two results and a non-empty `next_cursor`; `todoist_get_all` with the same params returns all three; `todoist_get_reminders(token, id)` returns only that task's. If the first page does not carry a cursor, STOP: paging does not work the way labels do, and the sweep must keep the sync read — PASSED 2026-10-06 on scratch task `6hh7pMCwJG5RXcRx`: first page 2 results, cursor present; `todoist_get_all` 3 (radii 100, 150, 200); by-task read 3, every `item_id` the scratch task's, every `type` `location`; account total 0 → 3 → task deleted (204), by-task read 0. The account held no other location reminder at the time, so the by-task narrowing against other tasks rests on the 2026-10-05 read above.
-- [ ] CI green; after Dan's merge, deploy green
+- [x] CI green; after Dan's merge, deploy green (PR #42 squash-merged as ba75428, run 37400979718 all green, Fly release v82, machine started with its check passing, `/` answers 200)
 
 #### Manual Verification
-- [ ] "How to verify" steps 2 to 5: every one of them reads reminders through the new path
-- [ ] Untag the task before step 5 and tag it again: the reminder is removed and re-added, not duplicated
+- [x] "How to verify" steps 2 to 5: every one of them reads reminders through the new path — PASSED on v82, 2026-10-06 (Fly log, UTC, mapping row 21, label `test_label`): 14:41:34 `Existing location reminders for item: 0`, `reminder_add` ok; 14:41:57 edit to 255, `sweep matched 1 of 1`, two ok; 14:42:34 edit back, `sweep matched 1 of 1`, two ok; 14:43:16 delete, `sweep matched 1 of 1`, one ok.
+- [x] Untag the task before step 5 and tag it again: the reminder is removed and re-added, not duplicated — 14:43:01 untag: `Existing location reminders for item: 1`, `Deleting reminder` + `reminder_delete` ok; 14:43:06 retag: `Existing ... 0`, `reminder_add` ok. No refused, failed, redelivery or traceback line; the only `[error]` lines are Fly's health probe at two autostart wake-ups (14:30:24Z, 14:40:28Z), passing 4-5 s later before gunicorn's worker booted.
 
 **Implementation Note**: stop after this phase until Dan confirms.
+
+**Result**: PR #42, squash-merged as ba75428, Fly release v82. `test_reading_reminders_is_not_a_full_sync` failing-first on 8ad6ec4; 44 tests, `app.py` 90%. Live paging gate passed on a scratch task (limit=2 pages with a cursor). `grep -c sync_token app.py` is 0. D5 closed; report section 5 item 5 done.
 
 ---
 
@@ -429,8 +431,8 @@ Delete `ignore_missing_imports` (item 1); delete `[tool.ruff.format]` and `targe
 ### Success Criteria
 
 #### Automated Verification
-- [ ] The new test and the three new rows fail on PR B's code; output in the PR body
-- [ ] `make check` exits 0 (mypy without `ignore_missing_imports` passed while auditing); CI green
+- [x] The new test and the three new rows fail on PR B's code; output in the PR body (on ba75428: `test_second_label_at_the_same_place_is_refused` 302 == 400; `test_create_rejects_bad_input` fails at `{"lat": "nan"}` with `sqlite3.IntegrityError: NOT NULL constraint failed: location_label.lat`, SQLite storing NaN as NULL, where the plan expected a 302 — production Postgres would have stored it)
+- [x] `make check` exits 0 (45 passed, `app.py` 90%; mypy clean without `ignore_missing_imports`); CI green
 - [ ] After Dan's merge: deploy green; machine `started` with its check passing after the `fly.toml` change
 
 #### Manual Verification
