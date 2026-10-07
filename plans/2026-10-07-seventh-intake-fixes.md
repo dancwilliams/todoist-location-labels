@@ -167,10 +167,12 @@ Traced, not yet run: for the delete target, `second request dropped` now applies
 - [x] `git diff 8952df0 -- app.py` shows exactly two hunks, the docstring (`:340-341`) and the `__main__` block (`:657-658`); `git diff 8952df0 -- app.py | grep -cE '^[-+].*\bexcept\b'` is 0; no hunk touches a statement of `sweep_reminders` or anything below `def webhook`
 - [x] The documented command run by hand once, as the README says it, against a scratch file: `DATABASE_URL=sqlite:///<scratchpad>/x.db uv run python app.py initdb` exits 0 and `sqlite3 <file> .schema` (or the Python equivalent) shows both tables
 - [x] CI green on the PR (3.13 and 3.14)
-- [ ] After Dan's merge: deploy job green; machine `started` with its check passing; `curl -s -o /dev/null -w '%{http_code}' https://todoist-location-labels.fly.dev/` prints 200
+- [x] After Dan's merge: deploy job green; machine `started` with its check passing; `curl -s -o /dev/null -w '%{http_code}' https://todoist-location-labels.fly.dev/` prints 200
 
 #### Manual Verification
 - None. Nothing in this phase runs in production; the automated list above is the whole check. Dan may run the by-hand `initdb` line himself if he wants to see it, but the test is the proof.
+
+**Result (2026-10-07)**: PR #53 squash-merged by Dan as 76be84c; CI run 37649637149 green on 3.13 and 3.14; deploy run 37653266884 green, Fly release v93, machine 91854667f4e938 `started` with `servicecheck-00-http-5000` passing, GET / 200. 99 tests, `app.py` 91%. One grill claim was wrong: pytest-cov does not count the subprocess's `__main__` lines (the installed `a1_coverage.pth` starts coverage only under `COVERAGE_PROCESS_START`/`COVERAGE_PROCESS_CONFIG`, which pytest-cov does not set); `app.py:659-663` stay listed as missed. Counting them would need coverage's `patch = ["subprocess"]`; not done, out of scope.
 
 **Implementation Note**: no pause for manual steps. The phase ends at Dan's merge plus the deploy check (the last three boxes above). Phase 2 starts in a fresh session on Dan's go (`/clear`, then `/implement_plan plans/2026-10-07-seventh-intake-fixes.md`), never in the session that ran Phase 1.
 
@@ -185,8 +187,8 @@ Traced, not yet run: for the delete target, `second request dropped` now applies
 - AutoMem: one pointer memory, linked to the seventh intake's memory (`7496a96d-9334-433d-951d-8b915153c626`).
 
 ### Success Criteria
-- [ ] Report written with a status for every row of `standards.md`, every documented command listed with its exit code, and a non-empty Not checked section
-- [ ] Verdict 0 tier 1, 0 tier 2 — or the failing rows listed here with the reason
+- [x] Report written with a status for every row of `standards.md`, every documented command listed with its exit code, and a non-empty Not checked section
+- [x] Verdict 0 tier 1, 0 tier 2 — or the failing rows listed here with the reason: **0 tier 1, 1 tier 2 (2.25)**. G2, known since the seventh run and deferred by decision 3, is named only in `plans/`; the row says "not only in a plan", issues are disabled, and no override sentence is in CLAUDE.md. The seventh report's 2.25 PASS had overlooked G2. Two new shipped defects, H1 (a second label can take a half-applied key and its sweep moves the first label's reminders) and H2 (a refused add plus a later dropped request loses that task's reminder and the resubmit answers 302), both pre-existing, both needing a never-observed dropped request, were first named in the report and add the by-construction component. 2.12 PASS as amended: `cp .env.example .env`, `initdb` and `make check` run with exit 0; `uv sync`, `uv run python app.py` and `fly deploy` traced with the reason. No code bug in #53; the three-task row converges under every target and fault, requests 3 and 4 dropped and answer-lost included (106 scratch cases + 45 table rows). Report: `plans/intake-2026-10-07-2.md`. Not fixed inside the intake; fix order 1 is Dan's choice (a README clause, a CLAUDE.md override, or the code fixes)
 - [ ] PR B merged by Dan; this plan's result lines written under each phase
 
 ---
