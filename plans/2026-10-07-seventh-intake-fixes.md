@@ -166,7 +166,7 @@ Traced, not yet run: for the delete target, `second request dropped` now applies
 - [x] `make check` exits 0; the test count is 98 + 1 = 99; `app.py` coverage not below 91%
 - [x] `git diff 8952df0 -- app.py` shows exactly two hunks, the docstring (`:340-341`) and the `__main__` block (`:657-658`); `git diff 8952df0 -- app.py | grep -cE '^[-+].*\bexcept\b'` is 0; no hunk touches a statement of `sweep_reminders` or anything below `def webhook`
 - [x] The documented command run by hand once, as the README says it, against a scratch file: `DATABASE_URL=sqlite:///<scratchpad>/x.db uv run python app.py initdb` exits 0 and `sqlite3 <file> .schema` (or the Python equivalent) shows both tables
-- [ ] CI green on the PR (3.13 and 3.14)
+- [x] CI green on the PR (3.13 and 3.14)
 - [ ] After Dan's merge: deploy job green; machine `started` with its check passing; `curl -s -o /dev/null -w '%{http_code}' https://todoist-location-labels.fly.dev/` prints 200
 
 #### Manual Verification
