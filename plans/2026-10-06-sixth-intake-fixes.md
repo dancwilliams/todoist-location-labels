@@ -367,7 +367,7 @@ Rows that fail on 4ada2c5 (paste in the PR body): every `coordinates only` row w
 - [x] `grep -n 'def webhook' -A 100 app.py` is byte-identical to 4ada2c5's (`git diff 4ada2c5 -- app.py` shows no hunk below the `@app.route("/webhook")` line) — decision 4 (one hunk, `-309,43 +309,69`)
 
 Deviations from the §3/§4 sketches, all in the tests: (a) the fake names a new reminder by the command's `temp_id`, not `f{len(commands)}` — the latter is the same for every add in one batch, so one delete would have removed both; (b) the test resubmits only after a 502: a delete that answered 302 has removed the row, so there is nothing to resubmit, and a saved edit's no-op resubmit is `test_resubmitting_unchanged_values_touches_nothing`; (c) in `test_resubmitted_edit_does_not_double_a_moved_reminder`, task 900's moved reminder carries the new coordinates (`1.5`, `2.5`), since the kept reminder must be exactly at the new place. Phase 0's "either branch" case (a resubmit with `lat="1.0000000001"` makes no Todoist call) landed here too, inside that test, so the count stays 98.
-- [ ] CI green on the PR (3.13 and 3.14)
+- [x] CI green on the PR (3.13 and 3.14) (PR #51, run 37556508333, both pass)
 - [ ] After Dan's merge: deploy job green; machine `started` with its check passing; `curl -s -o /dev/null -w '%{http_code}' https://todoist-location-labels.fly.dev/` prints 200
 
 #### Manual Verification
