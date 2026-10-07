@@ -89,7 +89,7 @@ Decision rule, pre-stated:
 
 Docs only: `plans/intake-2026-10-06-3.md`, this plan, `plans/2026-10-06-fifth-intake-fixes.md` (Phase 2 close-out), `plans/2026-10-06-fourth-intake-fixes.md` (one line). No code. Lands master's record of the state before the code changes.
 
-- [ ] PR 0 opened; CI green (docs-only still runs `check`); merged by Dan
+- [x] PR 0 opened; CI green (docs-only still runs `check`); merged by Dan (#50 merged as 9d74b0e, 2026-10-06; run 37553999329 check 3.13, 3.14 and deploy green — a docs-only deploy, Fly v90 — GET / 200)
 
 ---
 
@@ -361,10 +361,12 @@ Rows that fail on 4ada2c5 (paste in the PR body): every `coordinates only` row w
 ### Success Criteria
 
 #### Automated Verification
-- [ ] The rows and assertions named in §4 fail on 4ada2c5 for the stated reasons; output in the PR body
-- [ ] `make check` exits 0; `app.py` coverage not below 91%; the test count is 51 + 45 + 2 = 98
-- [ ] `git diff 4ada2c5 -- app.py | grep -cE '^[-+].*\bexcept\b'` is 0 (catch tuples untouched)
-- [ ] `grep -n 'def webhook' -A 100 app.py` is byte-identical to 4ada2c5's (`git diff 4ada2c5 -- app.py` shows no hunk below the `@app.route("/webhook")` line) — decision 4
+- [x] The rows and assertions named in §4 fail on 4ada2c5 for the stated reasons; output in the PR body (2026-10-06: 23 failed, 50 passed in `tests/test_routes.py` with 4ada2c5's `app.py` under the new tests — all 18 `coordinates only` rows, `half applied, two still to move / new name / second request dropped`, the three updated order assertions and `test_sweep_sends_adds_before_deletes`; the F1 and F2 rows both fail at `_assert_converged` with `('901', [])`, task 901 holding nothing)
+- [x] `make check` exits 0; `app.py` coverage not below 91%; the test count is 51 + 45 + 2 = 98 (98 passed, 91%; the new uncovered lines are `coordinate_of`'s `except`, which has no proven-source row)
+- [x] `git diff 4ada2c5 -- app.py | grep -cE '^[-+].*\bexcept\b'` is 0 (catch tuples untouched) — counts 1, which is §1's own `coordinate_of` clause; `^-.*\bexcept\b` counts 0, so no existing clause changed
+- [x] `grep -n 'def webhook' -A 100 app.py` is byte-identical to 4ada2c5's (`git diff 4ada2c5 -- app.py` shows no hunk below the `@app.route("/webhook")` line) — decision 4 (one hunk, `-309,43 +309,69`)
+
+Deviations from the §3/§4 sketches, all in the tests: (a) the fake names a new reminder by the command's `temp_id`, not `f{len(commands)}` — the latter is the same for every add in one batch, so one delete would have removed both; (b) the test resubmits only after a 502: a delete that answered 302 has removed the row, so there is nothing to resubmit, and a saved edit's no-op resubmit is `test_resubmitting_unchanged_values_touches_nothing`; (c) in `test_resubmitted_edit_does_not_double_a_moved_reminder`, task 900's moved reminder carries the new coordinates (`1.5`, `2.5`), since the kept reminder must be exactly at the new place. Phase 0's "either branch" case (a resubmit with `lat="1.0000000001"` makes no Todoist call) landed here too, inside that test, so the count stays 98.
 - [ ] CI green on the PR (3.13 and 3.14)
 - [ ] After Dan's merge: deploy job green; machine `started` with its check passing; `curl -s -o /dev/null -w '%{http_code}' https://todoist-location-labels.fly.dev/` prints 200
 
