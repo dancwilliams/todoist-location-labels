@@ -338,7 +338,9 @@ def sweep_reminders(token, old_place, new_place=None):
     Adds are sent before deletes, so whatever prefix Todoist applied, every task still
     holds a reminder and the next sweep converges. A resubmit is therefore always safe.
     Returns the number of adds Todoist refused; raises RequestException on API failure
-    or a refused delete, in which case a reminder is still at the old place.
+    or a refused delete, and the mapping must then stay where it was: a reminder may
+    still be at the old place, or every one may have moved with the answer lost. The
+    resubmit finishes the first and finds nothing to do for the second.
     """
     located = todoist_get_reminders(token)
     by_task: dict[str, list[dict]] = {}
@@ -655,6 +657,7 @@ def webhook():
 
 if __name__ == "__main__":
     if len(sys.argv) >= 2 and sys.argv[1] == "initdb":
-        db.create_all()
+        with app.app_context():  # Flask-SQLAlchemy 3 finds the engine through current_app
+            db.create_all()
     else:
         app.run(debug=True, use_reloader=True)
