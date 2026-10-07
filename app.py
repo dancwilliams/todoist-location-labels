@@ -299,8 +299,8 @@ def reminder_is_at(reminder, place):
     """True if a location reminder carries this place's name, trigger and radius.
 
     This is the only link between a mapping and the reminders made from it: the
-    app stores no reminder ids. A reminder the user made by hand with the same
-    three values is indistinguishable from one of ours.
+    app stores no reminder ids. A reminder made by hand never shares these values:
+    Todoist's geocoder formats an address differently from Google Places.
     """
     return reminder.get("type") == "location" and match_key(place) == (
         reminder.get("name"),
@@ -309,43 +309,69 @@ def reminder_is_at(reminder, place):
     )
 
 
-def sweep_reminders(token, old_place, new_place=None):
-    """Remove every reminder made from a mapping; for an edit, re-add each at the new place.
-
-    Without this, changing or deleting a mapping would strand its reminders: they
-    would match no mapping, so no later webhook could remove them. Returns the
-    number of re-adds Todoist refused; raises RequestException on API failure or
-    if a delete was refused, in which case a reminder is still at the old place.
-    """
-    commands = []
-    located = todoist_get_reminders(token)
-    matched = [r for r in located if reminder_is_at(r, old_place)]
-    # Zero of many is how a reminder that no longer matches its mapping shows up.
-    app.logger.info("sweep matched %d of %d location reminders", len(matched), len(located))
-    # After a refused delete, a missing status or a worker killed mid-sweep, some
-    # tasks have moved and some have not. The resubmit the 502 asks for must
-    # converge, so a task already holding a reminder at the new place gets no second one.
-    already = {
-        r["item_id"] for r in located if new_place is not None and reminder_is_at(r, new_place)
-    }
-    for reminder in matched:
-        commands.append(reminder_delete_command(reminder["id"]))
-        if new_place is not None and reminder["item_id"] not in already:
-            commands.append(reminder_add_command(reminder["item_id"], *new_place))
-    if skipped := sum(r["item_id"] in already for r in matched):
-        app.logger.info("sweep: %d re-adds skipped, reminder already at the new place", skipped)
+def coordinate_of(value):
+    """A reminder's loc_lat or loc_long as a number, or None if it is not one."""
     try:
-        todoist_run_commands(token, commands, "sweep")
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def reminder_is_exactly_at(reminder, place):
+    """reminder_is_at, and the coordinates agree: the one reminder an edit keeps.
+
+    Todoist returns a coordinate as the string it was sent (read back 2026-10-06),
+    and the app sends str(float), so a mapping's floats equal its own reminder's.
+    """
+    return reminder_is_at(reminder, place) and (
+        coordinate_of(reminder.get("loc_lat")),
+        coordinate_of(reminder.get("loc_long")),
+    ) == (place[1], place[2])
+
+
+def sweep_reminders(token, old_place, new_place=None):
+    """Bring every task holding one of a mapping's reminders to exactly one at new_place.
+
+    Invariant, from any starting state: a task that holds a reminder matching the
+    mapping, at the old place or the new one, ends with exactly one reminder, exactly
+    at the new place, and no other at either; for a delete (new_place None), with none.
+    Adds are sent before deletes, so whatever prefix Todoist applied, every task still
+    holds a reminder and the next sweep converges. A resubmit is therefore always safe.
+    Returns the number of adds Todoist refused; raises RequestException on API failure
+    or a refused delete, in which case a reminder is still at the old place.
+    """
+    located = todoist_get_reminders(token)
+    by_task: dict[str, list[dict]] = {}
+    for reminder in located:
+        if reminder_is_at(reminder, old_place) or (
+            new_place is not None and reminder_is_at(reminder, new_place)
+        ):
+            by_task.setdefault(reminder["item_id"], []).append(reminder)
+    matched = sum(len(reminders) for reminders in by_task.values())
+    # Zero of many is how a reminder that no longer matches its mapping shows up.
+    app.logger.info("sweep matched %d of %d location reminders", matched, len(located))
+    adds: list[dict] = []
+    deletes: list[dict] = []
+    for item_id, reminders in by_task.items():
+        keep = None
+        if new_place is not None:
+            keep = next((r for r in reminders if reminder_is_exactly_at(r, new_place)), None)
+            if keep is None:
+                adds.append(reminder_add_command(item_id, *new_place))
+        deletes.extend(reminder_delete_command(r["id"]) for r in reminders if r is not keep)
+    if new_place is not None and (kept := len(by_task) - len(adds)):
+        app.logger.info("sweep: %d tasks already at the new place", kept)
+    try:
+        todoist_run_commands(token, adds + deletes, "sweep")
     except TodoistRefused as e:
-        adds = {c["uuid"] for c in commands if c["type"] == "reminder_add"}
-        if not set(e.refused) <= adds:
+        if not set(e.refused) <= {c["uuid"] for c in adds}:
             raise
         # Every delete went through, so nothing is left at the old place and the
         # mapping must move with the reminders that did: kept at the old place,
         # it would no longer match them, the webhook would add a second reminder
         # at the old place when such a task changes, and a resubmit would then
         # leave that task with two at the new place.
-        app.logger.warning("sweep: %d re-adds refused, mapping saved: %s", len(e.refused), e)
+        app.logger.warning("sweep: %d adds refused, mapping saved: %s", len(e.refused), e)
         return len(e.refused)
     return 0
 

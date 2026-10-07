@@ -27,12 +27,29 @@ HOME_REMINDER = {
     "type": "location",
     "item_id": "900",
     "name": "Home",
+    "loc_lat": "1.0",
+    "loc_long": "2.0",
     "loc_trigger": "on_enter",
     "radius": 100.0,
 }
 OTHER_REMINDER = dict(HOME_REMINDER, id="r2", item_id="901", name="Somewhere else")
 # What Todoist put in sync_status for a command it refused (read 2026-10-05); HTTP stayed 200.
 REFUSED = {"error": "Invalid argument value", "error_code": 20, "http_code": 400}
+
+
+def _stored(args, reminder_id):
+    """What a reminder_add leaves in the account, as the REST read returns it: the
+    coordinates come back as the strings they were sent (read back 2026-10-06)."""
+    return {
+        "id": reminder_id,
+        "type": "location",
+        "item_id": args["item_id"],
+        "name": args["name"],
+        "loc_lat": args["loc_lat"],
+        "loc_long": args["loc_long"],
+        "loc_trigger": args["loc_trigger"],
+        "radius": args["radius"],
+    }
 
 
 def _sent(fake_todoist):
@@ -106,6 +123,11 @@ def fake_todoist(monkeypatch):
     make it misbehave, and a command whose type is in state["refuse"] is refused the
     way Todoist refuses one: inside a 200 answer. The app's retry policy applies,
     with the waits removed.
+
+    Commands are applied the way Todoist applies them: an "ok" reminder_add or
+    reminder_delete changes state["reminders"], a refused one does not. A sync
+    request whose number (from 1) is in state["drop_batches"] is dropped without a
+    reply, which the app sees as a connection error; state["batches"] counts them.
     """
     state = {
         "labels": [],
@@ -116,6 +138,8 @@ def fake_todoist(monkeypatch):
         "status": 200,
         "stall": 0.0,
         "refuse": (),
+        "batches": 0,
+        "drop_batches": (),
     }
 
     class Handler(BaseHTTPRequestHandler):
@@ -150,14 +174,24 @@ def fake_todoist(monkeypatch):
             state["posts"].append(sorted(form))
             commands = json.loads(form.get("commands", ["[]"])[0])
             state["commands"].extend(commands)
-            self._reply(
-                {
-                    "sync_status": {
-                        c["uuid"]: REFUSED if c["type"] in state["refuse"] else "ok"
-                        for c in commands
-                    },
-                }
-            )
+            state["batches"] += 1
+            if state["batches"] in state["drop_batches"]:
+                self.close_connection = True  # no reply: a connection error, not retried
+                return
+            status = {}
+            for c in commands:
+                if c["type"] in state["refuse"]:
+                    status[c["uuid"]] = REFUSED
+                    continue
+                if c["type"] == "reminder_add":
+                    # Todoist names the new reminder; the command's temp_id is unique too.
+                    state["reminders"].append(_stored(c["args"], c["temp_id"]))
+                elif c["type"] == "reminder_delete":
+                    state["reminders"] = [
+                        r for r in state["reminders"] if r["id"] != c["args"]["id"]
+                    ]
+                status[c["uuid"]] = "ok"
+            self._reply({"sync_status": status})
 
         def log_message(self, *args):
             pass
