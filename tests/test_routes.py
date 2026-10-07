@@ -386,8 +386,12 @@ def _rem(reminder_id, item_id, place):
 # place and the target so every row also runs as a half-applied coordinate-only edit.
 # Every row has a proven source (the sixth plan, decision 7); a new row needs one too.
 STATES = {
-    # every edit
-    "first edit": lambda old, new: [_rem("r1", "900", old), _rem("r2", "901", old)],
+    # every edit; three tasks, so a delete spans two requests under SYNC_BATCH = 2
+    "first edit": lambda old, new: [
+        _rem("r1", "900", old),
+        _rem("r2", "901", old),
+        _rem("r3", "902", old),
+    ],
     # a sweep cut off after its adds (stub C, E): one task holds both, one the new only
     "half applied": lambda old, new: [
         _rem("r1", "900", old),
