@@ -189,7 +189,9 @@ Traced, not yet run: for the delete target, `second request dropped` now applies
 ### Success Criteria
 - [x] Report written with a status for every row of `standards.md`, every documented command listed with its exit code, and a non-empty Not checked section
 - [x] Verdict 0 tier 1, 0 tier 2 — or the failing rows listed here with the reason: **0 tier 1, 1 tier 2 (2.25)**. G2, known since the seventh run and deferred by decision 3, is named only in `plans/`; the row says "not only in a plan", issues are disabled, and no override sentence is in CLAUDE.md. The seventh report's 2.25 PASS had overlooked G2. Two new shipped defects, H1 (a second label can take a half-applied key and its sweep moves the first label's reminders) and H2 (a refused add plus a later dropped request loses that task's reminder and the resubmit answers 302), both pre-existing, both needing a never-observed dropped request, were first named in the report and add the by-construction component. 2.12 PASS as amended: `cp .env.example .env`, `initdb` and `make check` run with exit 0; `uv sync`, `uv run python app.py` and `fly deploy` traced with the reason. No code bug in #53; the three-task row converges under every target and fault, requests 3 and 4 dropped and answer-lost included (106 scratch cases + 45 table rows). Report: `plans/intake-2026-10-07-2.md`. Not fixed inside the intake; fix order 1 is Dan's choice (a README clause, a CLAUDE.md override, or the code fixes)
-- [ ] PR B merged by Dan; this plan's result lines written under each phase
+- [x] PR B merged by Dan; this plan's result lines written under each phase
+
+**Result (2026-10-07)**: PR #54 squash-merged by Dan as 895d375; master run 37657785119 green (check 3.13, check 3.14, deploy); Fly release v94 (same code as v93), machine 91854667f4e938 `started` with `servicecheck-00-http-5000` passing, GET / 200. Verdict 0 tier 1, 1 tier 2 (2.25), bugs G2, H1, H2; report `plans/intake-2026-10-07-2.md`. This plan is closed; 2.25 and the two new bugs are the next plan's input, if Dan wants one. This tick sits uncommitted on master and rides in the next PR.
 
 ---
 
