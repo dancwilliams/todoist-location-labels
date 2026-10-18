@@ -1,6 +1,8 @@
 version: 2
 updates:
-  - package-ecosystem: "pip"
+  # uv, not pip: uv.lock is what CI installs (uv sync --frozen). The pip
+  # ecosystem only ever proposed pyproject range bumps, all closed unmerged.
+  - package-ecosystem: "uv"
     directory: "/"
     schedule:
       interval: "weekly"
@@ -9,8 +11,11 @@ updates:
     labels:
       - "dependencies"
     groups:
+      # Majors stay out of the group so they arrive as their own PR and are
+      # never swept into an auto-merge (see the automerge job in ci.yml).
       python:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
