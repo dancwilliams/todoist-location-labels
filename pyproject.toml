@@ -22,6 +22,8 @@ dev = [
 
 [tool.ruff]
 line-length = 100
+# Plans are dated records; ruff 0.17+ would reformat their code blocks.
+extend-exclude = ["plans"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
