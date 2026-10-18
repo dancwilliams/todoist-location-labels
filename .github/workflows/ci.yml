@@ -5,6 +5,9 @@ on:
     branches: [master]
   pull_request:
     branches: [master]
+  # Auto-merges are made with GITHUB_TOKEN, which does not trigger a push run;
+  # the automerge job dispatches this workflow on master to re-test and deploy.
+  workflow_dispatch:
 
 jobs:
   check:
@@ -29,7 +32,9 @@ jobs:
 
   deploy:
     needs: [check]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    if: >-
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     concurrency:
       group: deploy
@@ -43,3 +48,37 @@ jobs:
         run: flyctl deploy --remote-only
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+  # uv bumps from Dependabot merge themselves once check is green, then
+  # dispatch CI on master so the merged code is re-tested and deployed.
+  # Majors, Docker base images and Actions bumps stay human-merged.
+  automerge:
+    name: auto-merge Dependabot uv bump
+    needs: [check]
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      startsWith(github.head_ref, 'dependabot/uv/')
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+    steps:
+      - id: meta
+        uses: dependabot/fetch-metadata@v3
+      - if: steps.meta.outputs.update-type != 'version-update:semver-major'
+        # Several bumps finishing together race on master ("Base branch was
+        # modified"), so retry before giving up.
+        run: |
+          for i in 1 2 3 4 5; do
+            if gh pr merge --squash "$PR_URL"; then
+              gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref master
+              exit 0
+            fi
+            sleep 20
+          done
+          exit 1
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ github.token }}
