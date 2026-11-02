@@ -19,7 +19,7 @@ Automatically add location-based reminders to Todoist tasks by assigning labels.
 
 ## Stack
 
-- **Python 3.13** / Flask / Gunicorn
+- **Python** / Flask / Gunicorn
 - **Fly.io** for hosting (region: `dfw`)
 - **PostgreSQL** via SQLAlchemy
 - **Todoist API v1** for labels, reminders, and webhooks
@@ -55,7 +55,7 @@ uv run python app.py           # Dev server on port 5000
 
 ### Checks
 
-One command runs what CI runs (ruff format check, ruff lint, mypy, pytest with coverage):
+One command runs the checks CI runs (ruff format check, ruff lint, mypy, pytest with coverage):
 
 ```bash
 make check
@@ -65,7 +65,7 @@ make check
 
 | Variable | Purpose |
 |---|---|
-| `DATABASE_URL` | PostgreSQL connection string (falls back to `sqlite:///test.db`) |
+| `DATABASE_URL` | PostgreSQL connection string, `postgresql+psycopg2://...` (falls back to `sqlite:///test.db`) |
 | `TODOIST_CLIENT_ID` | OAuth client ID |
 | `TODOIST_CLIENT_SECRET` | OAuth client secret |
 | `TODOIST_FLASK_SECRET_KEY` | Flask session secret |
@@ -83,7 +83,7 @@ fly deploy
 
 ## CI/CD
 
-- **CI**: `make check` (ruff format/lint, mypy, pytest) on Python 3.13 and 3.14, every push and PR
+- **CI**: `make check` (ruff format/lint, mypy, pytest) on Python 3.13 and 3.14, plus an image build, every push and PR
 - **Deploy**: Auto-deploy to Fly.io on push to master
 - **Dependabot**: Weekly dependency updates for Python, GitHub Actions, and Docker
 
