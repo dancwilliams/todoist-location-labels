@@ -45,7 +45,7 @@ Webhook `event_data["labels"]` contains label **names** (strings), not IDs. The 
 ## Environment Variables
 | Variable | Purpose |
 |---|---|
-| `DATABASE_URL` | PostgreSQL connection string (falls back to `sqlite:///test.db`) |
+| `DATABASE_URL` | PostgreSQL connection string, `postgresql+psycopg2://...` (falls back to `sqlite:///test.db`) |
 | `TODOIST_CLIENT_ID` | OAuth client ID |
 | `TODOIST_CLIENT_SECRET` | OAuth client secret |
 | `TODOIST_FLASK_SECRET_KEY` | Flask session secret |
@@ -58,16 +58,17 @@ cp .env.example .env   # then fill in the values
 uv sync                # install deps from uv.lock (dev group included)
 uv run python app.py          # Dev server on port 5000
 uv run python app.py initdb   # Create database tables
-make check                    # what CI runs: ruff format --check, ruff check, mypy, pytest
+make check                    # ruff format --check, ruff check, mypy, pytest; CI also builds the image
 ```
 
 ## Deployment
 - **Platform**: Fly.io (`fly.toml`)
-- **Container**: Python 3.13 Alpine + `uv sync --frozen --no-dev`
+- **Container**: Python Alpine + `uv sync --frozen --no-dev`
 - **Entrypoint**: `gunicorn --no-control-socket -b 0.0.0.0:5000 app:app`
 - `--no-control-socket` is load-bearing. gunicorn 25 starts its control socket in a background thread that logs just as the master forks the first worker; a fork that lands mid-write leaves the worker deadlocked on its first log line, and gunicorn's timeout never fires for a worker that has not sent its first heartbeat. The machine then sits "started" and unreachable until Fly autostops it (outage 2026-10-04, 22:01-22:06 UTC).
 - `.dockerignore` excludes `.env*`: `COPY . /app` copies the checkout, and a manual `fly deploy` would otherwise ship a local `.env`.
 - `master` requires the `check` status; no reviewers (solo repo). Merging to master deploys.
+- The `check (3.14)` job runs `docker build .`, the only build before a deploy. `python:3.15-alpine` fails it on the current lock (greenlet 3.3.2 has no cp315 musl wheel, the image has no `g++`; measured 2026-11-02); #65 stays open for that move.
 
 ## Development Notes
 - Formatting + linting via `ruff` (config in `pyproject.toml`; rules E/F/I/N/W/UP, line length 100, double quotes); `mypy app.py` non-strict with `warn_return_any` and `check_untyped_defs`
@@ -91,4 +92,5 @@ make check                    # what CI runs: ruff format --check, ruff check, m
 - `LocationLabel` is unique on `(user_id, label_id)`. Submitting an already-mapped label edits it. There is no migration tool: the production constraint was added by hand (`ALTER TABLE location_label ADD CONSTRAINT uq_location_label_user_label UNIQUE (user_id, label_id)`), and `initdb` creates it on a fresh database (`tests/test_initdb.py` runs the command as a process; it is the only test of the `__main__` block).
 - Production data is database `todoist_location_labels` on Fly app `dcw-postgres-dev`. A second database there, `dcw_todoist_location`, is a stale copy with no writes since at least 2025-02; the app does not use it.
 - SQLAlchemy engine: `pool_pre_ping` on, `pool_recycle` 299 s, set through `SQLALCHEMY_ENGINE_OPTIONS` (Flask-SQLAlchemy 3 ignores the old `SQLALCHEMY_POOL_*` keys)
+- `DATABASE_URL` names its driver. SQLAlchemy 2.1 reads a bare `postgresql://` as `psycopg`, which is not installed, so the app cannot start, while every test still passes on SQLite (measured 2026-11-02 with 2.1.6). 2.0 to 2.1 is a minor bump, so the automerge job would not stop it.
 - Dependencies managed by `uv` (`pyproject.toml` + `uv.lock`); there is no `requirements.txt`

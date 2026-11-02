@@ -30,6 +30,12 @@ jobs:
       - name: Check
         run: make check
 
+      # The matrix tests CI's Python, not the image's, so a base image or lock
+      # change can pass every test and still fail to build at deploy.
+      - name: Build image
+        if: matrix.python-version == '3.14'
+        run: docker build .
+
   deploy:
     needs: [check]
     if: >-
